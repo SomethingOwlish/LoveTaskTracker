@@ -1,16 +1,110 @@
-# React + Vite
+# Совушка & Гусик — таск-трекер на двоих
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Браузерное PWA-приложение: список задач, матрица приоритетов, общий календарь,
+статистика, лайки/комментарии, ревью-флоу, две темы (дарк-академия / киберпанк)
+с переключателем цвета. Бэкенд — Firebase (Firestore + Google-авторизация).
 
-Currently, two official plugins are available:
+Пользователи зашиты в `src/config.js`:
+- `argentummortis@gmail.com` → Совушка
+- `arentakasi@gmail.com` → Гусик
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## 1. Запуск локально
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Нужен Node.js 18+.
 
-## Expanding the Oxlint configuration
+```bash
+npm install
+npm run dev
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+Откроется на `http://localhost:5173`.
+
+> При локальной разработке вход через Google работает, если `localhost` есть в
+> списке авторизованных доменов Firebase (по умолчанию он там есть).
+
+---
+
+## 2. Настройка Firebase (один раз)
+
+Проект уже создан (`tasktrackergando`), конфиг прописан в `src/firebase.js`.
+Нужно включить три вещи в консоли Firebase (https://console.firebase.google.com):
+
+1. **Authentication → Sign-in method → Google** — включить.
+2. **Firestore Database** — создать базу (production mode).
+3. **Firestore → Rules** — вставить содержимое файла `firestore.rules` из этого
+   проекта и опубликовать. Эти правила пускают к данным только две почты выше.
+4. **Authentication → Settings → Authorized domains** — добавить домен, на
+   котором будет жить приложение (например `<логин>.github.io`), иначе вход не
+   сработает на проде.
+
+---
+
+## 3. Деплой на GitHub Pages
+
+Вариант А — пакетом `gh-pages` (быстро):
+
+```bash
+# один раз: создать репозиторий и запушить код
+git init && git add . && git commit -m "init"
+git remote add origin https://github.com/<логин>/<репозиторий>.git
+git push -u origin main
+
+# деплой (соберёт dist и зальёт в ветку gh-pages)
+npm run deploy
+```
+
+Затем в настройках репозитория: **Settings → Pages → Source = ветка `gh-pages`**.
+Приложение будет по адресу `https://<логин>.github.io/<репозиторий>/`.
+
+> `base: './'` в `vite.config.js` уже настроен так, чтобы работало из подпапки
+> репозитория — отдельно его править не нужно.
+
+Не забудь добавить итоговый домен в Authorized domains (см. п.2.4).
+
+---
+
+## 4. Установка на iPhone (как приложение)
+
+1. Открыть адрес приложения в **Safari**.
+2. Кнопка «Поделиться» → **«На экран Домой»**.
+3. Появится иконка-кнопка; запускается в полноэкранном режиме без адресной строки.
+
+То же самое работает на Android через Chrome («Установить приложение»).
+
+---
+
+## 5. Структура
+
+```
+src/
+  App.jsx              вход, вкладки, управление темой
+  firebase.js          инициализация Firebase
+  config.js            два пользователя (whitelist)
+  theme.css            две темы + переменные
+  styles.css           стили интерфейса
+  lib/
+    db.js              работа с Firestore (задачи, события, комментарии, ревью)
+    recurrence.js      пересчёт повторений
+    util.js            даты, квадранты, хелперы статистики
+  components/
+    TasksView.jsx      список + фильтры
+    TaskCard.jsx       карточка задачи
+    TaskModal.jsx      форма создания/редактирования + комментарии + ревью
+    MatrixView.jsx     координатная матрица
+    CalendarView.jsx   месячный календарь
+    ProfileView.jsx    статистика + темы + аватары
+    Avatar.jsx         сова / гусь
+public/
+  manifest.webmanifest, sw.js, иконки   PWA
+firestore.rules        правила доступа (вставить в Firebase)
+```
+
+---
+
+## Что упрощено в этом драфте (по ТЗ, доработаем дальше)
+- Повторения — простой пересчёт даты (день/неделя/месяц).
+- Матрица — позиция задаётся слайдерами (перетаскивание точки добавим позже).
+- Календарь — только месячный вид.
+- Push-уведомлений пока нет.

@@ -1,52 +1,158 @@
-import { useState, useEffect } from 'react';
-import { db } from './firebase';
-import { collection, onSnapshot, query, orderBy, addDoc, serverTimestamp } from 'firebase/firestore';
-import { TaskCard } from './components/TaskCard';
+import { useEffect, useMemo, useState } from 'react';
+import { onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
+import { auth, provider } from './firebase';
+import { ALLOWED_EMAILS, USERS, userByEmail } from './config';
+import { subscribeTasks, subscribeEvents } from './lib/db';
+import { Avatar } from './components/Avatar';
+import { TasksView } from './components/TasksView';
+import { MatrixView } from './components/MatrixView';
+import { CalendarView } from './components/CalendarView';
+import { ProfileView, ACCENTS } from './components/ProfileView';
+import { TaskModal } from './components/TaskModal';
+
+const DEFAULT_ACCENT = { academia: '#d99873', cyberpunk: '#00f2ff' };
 
 export default function App() {
-  const [tab, setTab] = useState('list');
+  const [user, setUser] = useState(undefined); // undefined = грузится, null = нет
+  const [tab, setTab] = useState('tasks');
   const [tasks, setTasks] = useState([]);
-  const [modal, setModal] = useState(false);
+  const [events, setEvents] = useState([]);
+  const [modal, setModal] = useState(null); // null | {} (new) | task (edit)
+
+  // тема и акцент
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'academia');
+  const [accent, setAccent] = useState(() => localStorage.getItem('accent') || DEFAULT_ACCENT.academia);
 
   useEffect(() => {
-    return onSnapshot(query(collection(db, "tasks"), orderBy("createdAt", "desc")), 
-      (s) => setTasks(s.docs.map(d => ({ id: d.id, ...d.data() }))));
-  }, []);
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+    // если акцент не из палитры новой темы — берём дефолтный для темы
+    const ok = (ACCENTS[theme] || []).some((a) => a.c === accent);
+    const eff = ok ? accent : DEFAULT_ACCENT[theme];
+    if (eff !== accent) setAccent(eff);
+    document.documentElement.style.setProperty('--accent', eff);
+    localStorage.setItem('accent', eff);
+  }, [theme, accent]);
 
-  return (
-    <div className="max-w-[480px] mx-auto p-4 min-h-screen">
-      {/* Навигация */}
-      <div className="flex gap-2 mb-6 glass p-1">
-        {['list', 'matrix'].map(t => (
-          <button key={t} onClick={() => setTab(t)} className={`flex-1 py-3 rounded-lg font-bold capitalize ${tab === t ? 'bg-[var(--accent)] text-black' : ''}`}>{t}</button>
-        ))}
-      </div>
+  useEffect(() => onAuthStateChanged(auth, setUser), []);
 
-      {tab === 'list' ? (
-        <div className="space-y-4">{tasks.map(t => <TaskCard key={t.id} task={t} />)}</div>
-      ) : (
-        <div className="glass h-[400px] flex items-center justify-center relative">
-          <p className="opacity-40 uppercase tracking-widest">Сетка Матрицы</p>
+  useEffect(() => {
+    if (!user) return;
+    const u1 = subscribeTasks(setTasks);
+    const u2 = subscribeEvents(setEvents);
+    return () => { u1(); u2(); };
+  }, [user]);
+
+  const me = useMemo(() => {
+    if (!user?.email) return null;
+    const email = user.email.toLowerCase();
+    const info = userByEmail(email);
+    return info ? { uid: email, email, name: info.name, avatar: info.avatar } : null;
+  }, [user]);
+
+  const users = useMemo(
+    () => ALLOWED_EMAILS.map((email) => ({ uid: email, email, name: USERS[email].name, avatar: USERS[email].avatar })),
+    []
+  );
+  const userOf = (uid) => {
+    const info = userByEmail(uid);
+    return info ? { uid, email: uid, ...info } : { uid, email: uid, name: '?', avatar: 'owl' };
+  };
+
+  // ---- состояния входа ----
+  if (user === undefined) {
+    return <div className="login"><div className="box"><p>Загрузка…</p></div></div>;
+  }
+
+  if (!user) {
+    const login = async () => {
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (e) {
+        if (['auth/popup-blocked', 'auth/cancelled-popup-request', 'auth/operation-not-supported-in-this-environment'].includes(e.code)) {
+          await signInWithRedirect(auth, provider);
+        } else {
+          alert('Не удалось войти: ' + e.message);
+        }
+      }
+    };
+    return (
+      <div className="login">
+        <div className="box">
+          <div className="pair">
+            <Avatar avatar="owl" size="lg" />
+            <Avatar avatar="goose" size="lg" />
+          </div>
+          <h1>Совушка & Гусик</h1>
+          <p>Общий трекер задач на двоих.</p>
+          <button className="btn btn-accent btn-block" onClick={login}>Войти через Google</button>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {/* Кнопка создания */}
-      <button className="fixed bottom-6 right-6 md:top-6 md:right-6 w-14 h-14 btn-accent text-2xl shadow-2xl" onClick={() => setModal(true)}>+</button>
+  if (!me) {
+    return (
+      <div className="login">
+        <div className="box">
+          <h1>Нет доступа</h1>
+          <p>Этот аккаунт ({user.email}) не в списке. Зайди под нужной почтой.</p>
+          <button className="btn btn-block" onClick={() => signOut(auth)}>Сменить аккаунт</button>
+        </div>
+      </div>
+    );
+  }
 
-      {/* Модалка */}
-      {modal && (
-        <div className="fixed inset-0 bg-black/80 p-6 flex items-center justify-center z-50">
-          <div className="glass w-full p-6 space-y-4">
-            <input id="title" className="w-full bg-transparent border-b p-2" placeholder="Название..."/>
-            <input id="desc" className="w-full bg-transparent border-b p-2" placeholder="Описание..."/>
-            <input id="proj" className="w-full bg-transparent border-b p-2" placeholder="Проект..."/>
-            <button className="w-full btn-accent" onClick={async () => {
-              await addDoc(collection(db, "tasks"), { title: document.getElementById('title').value, description: document.getElementById('desc').value, project: document.getElementById('proj').value, createdAt: serverTimestamp() });
-              setModal(false);
-            }}>Сохранить</button>
-            <button className="w-full opacity-50" onClick={() => setModal(false)}>Отмена</button>
+  // ---- основное приложение ----
+  return (
+    <div className="app">
+      <div className="topbar">
+        <div className="brand">
+          <Avatar email={me.email} avatar={me.avatar} size="lg" />
+          <div>
+            <h1>{me.name}</h1>
+            <div className="sub">задачи на двоих</div>
           </div>
         </div>
+      </div>
+
+      {tab === 'tasks' && <TasksView tasks={tasks} me={me} users={users} userOf={userOf} onOpen={setModal} />}
+      {tab === 'matrix' && <MatrixView tasks={tasks} onOpen={setModal} />}
+      {tab === 'calendar' && <CalendarView tasks={tasks} events={events} me={me} onOpen={setModal} />}
+      {tab === 'profile' && (
+        <ProfileView
+          tasks={tasks} me={me} users={users}
+          theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}
+        />
+      )}
+
+      {(tab === 'tasks' || tab === 'matrix') && (
+        <button className="fab" onClick={() => setModal({})} aria-label="Новая задача">+</button>
+      )}
+
+      <nav className="nav">
+        <button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}>
+          <span className="ico">☑</span>Задачи
+        </button>
+        <button className={tab === 'matrix' ? 'active' : ''} onClick={() => setTab('matrix')}>
+          <span className="ico">⊹</span>Матрица
+        </button>
+        <button className={tab === 'calendar' ? 'active' : ''} onClick={() => setTab('calendar')}>
+          <span className="ico">▦</span>Календарь
+        </button>
+        <button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>
+          <span className="ico">◑</span>Профиль
+        </button>
+      </nav>
+
+      {modal !== null && (
+        <TaskModal
+          task={modal.id ? modal : null}
+          me={me}
+          users={users}
+          userOf={userOf}
+          onClose={() => setModal(null)}
+        />
       )}
     </div>
   );

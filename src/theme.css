@@ -1,0 +1,60 @@
+/* ============================================================
+   ТЕМЫ. Две полноценные палитры-скина.
+   Базовый набор переменных задаёт скин ([data-theme=...]),
+   акцентный цвет (--accent) переопределяется отдельно из App
+   (переключатель цвета в профиле).
+   ============================================================ */
+
+:root {
+  --radius: 14px;
+  --radius-sm: 9px;
+  --maxw: 520px;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* --------- ДАРК-АКАДЕМИЯ (по умолчанию) --------- */
+:root,
+[data-theme='academia'] {
+  --bg: #2c2420;
+  --bg-2: #241d19;
+  --surface: #3a302a;
+  --surface-2: #463a33;
+  --border: rgba(236, 227, 214, 0.14);
+  --text: #ece3d6;
+  --text-dim: #b6a591;
+  --accent: #d99873;
+  --accent-ink: #2a1f18;
+  --good: #8aa46a;
+  --warn: #d8a657;
+  --bad: #c46a5a;
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-body: 'Newsreader', Georgia, serif;
+  --font-mono: ui-monospace, monospace;
+  --glow: none;
+  --texture: radial-gradient(120% 120% at 50% 0%, rgba(217, 152, 115, 0.06), transparent 60%);
+}
+
+/* --------- КИБЕРПАНК --------- */
+[data-theme='cyberpunk'] {
+  --bg: #06060c;
+  --bg-2: #0a0a14;
+  --surface: #10101d;
+  --surface-2: #161630;
+  --border: rgba(0, 242, 255, 0.18);
+  --text: #e9f7ff;
+  --text-dim: #7d90a8;
+  --accent: #00f2ff;
+  --accent-ink: #03121a;
+  --good: #39ff8a;
+  --warn: #ffc24d;
+  --bad: #ff5c8a;
+  --font-display: 'Chakra Petch', system-ui, sans-serif;
+  --font-body: 'Chakra Petch', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --glow: 0 0 16px color-mix(in srgb, var(--accent) 55%, transparent);
+  --texture: linear-gradient(transparent 0, transparent 95%, color-mix(in srgb, var(--accent) 7%, transparent) 100%),
+    radial-gradient(140% 100% at 50% -10%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 55%);
+  --radius: 10px;
+  --radius-sm: 7px;
+}

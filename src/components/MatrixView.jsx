@@ -1,12 +1,47 @@
-export const MatrixView = ({ tasks }) => (
-  <div className="relative w-full aspect-square bg-[var(--card-bg)] rounded-2xl border border-white/10 mt-4 overflow-hidden">
-    <div className="absolute inset-0 flex items-center justify-center opacity-20">
-      <div className="w-px h-full bg-white"></div>
-      <div className="h-px w-full bg-white"></div>
+import { isClosed } from '../lib/util';
+
+export function MatrixView({ tasks, onOpen }) {
+  const active = tasks.filter((t) => !isClosed(t));
+
+  return (
+    <div className="matrix-wrap">
+      <p style={{ color: 'var(--text-dim)', fontSize: 13, margin: '0 0 4px' }}>
+        Слева — важно, сверху — срочно. Точка задачи на координатной сетке.
+      </p>
+      <div className="matrix">
+        <span className="axislabel lbl-top">Срочно</span>
+        <span className="axislabel lbl-bottom">Не срочно</span>
+        <span className="axislabel lbl-left">Важно</span>
+        <span className="axislabel lbl-right">Не важно</span>
+
+        <div className="axis-v" />
+        <div className="axis-h" />
+
+        <span className="q-label q-tl">Делать<br />сейчас</span>
+        <span className="q-label q-tr">Делегировать</span>
+        <span className="q-label q-bl">Запланировать</span>
+        <span className="q-label q-br">Можно<br />не делать</span>
+
+        {active.map((t) => {
+          const imp = t.priorityMatrix?.importance ?? 0;
+          const urg = t.priorityMatrix?.urgency ?? 0;
+          // +важность уводит ВЛЕВО, +срочность уводит ВВЕРХ
+          const left = 50 - imp * 9;
+          const top = 50 - urg * 9;
+          return (
+            <button
+              key={t.id}
+              className="dot"
+              style={{ left: `${left}%`, top: `${top}%` }}
+              title={t.title}
+              onClick={() => onOpen(t)}
+            >
+              {t.title.slice(0, 1).toUpperCase()}
+            </button>
+          );
+        })}
+      </div>
+      {active.length === 0 && <p className="empty">Активных задач нет — сетка пустая.</p>}
     </div>
-    {tasks.map(t => (
-      <div key={t.id} className="absolute w-3 h-3 bg-[var(--accent)] rounded-full animate-pulse" 
-           style={{ left: `${50 + (t.importance * 10)}%`, top: `${50 - (t.urgency * 10)}%` }} />
-    ))}
-  </div>
-);
+  );
+}
