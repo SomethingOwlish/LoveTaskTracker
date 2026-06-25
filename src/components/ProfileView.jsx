@@ -1,8 +1,14 @@
 import { useState } from 'react';
 import { Avatar } from './Avatar';
-import { startOfToday, startOfWeek, toDate, isActive, isClosed } from '../lib/util';
+import { startOfToday, startOfWeek, toDate, isActive, isClosed, projectsOf } from '../lib/util';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
+
+export const PROJECT_PALETTE = [
+  '#d99873', '#c9a24b', '#a4453f', '#85925a', '#bd9a63',
+  '#00f2ff', '#ff2bd6', '#39ff8a', '#8a6bff', '#ffae00',
+  '#6aa0d8', '#d86a9e',
+];
 
 const ACCENTS = {
   academia: [
@@ -37,10 +43,12 @@ function statsFor(tasks, uid) {
   return { open, doneToday, doneWeek };
 }
 
-export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAccent }) {
+export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAccent, projectColors, setProjectColor }) {
   const [view, setView] = useState(me.uid); // чьи смотрим
   const who = users.find((u) => u.uid === view) || me;
   const s = statsFor(tasks, view);
+  const myProjects = projectsOf(tasks, me.uid);
+  const [editProj, setEditProj] = useState(null);
 
   return (
     <div>
@@ -86,6 +94,30 @@ export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAcce
               />
             ))}
           </div>
+
+          <div className="section-title">Цвета проектов</div>
+          {myProjects.length === 0 && <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>Появятся, когда заведёшь проекты в задачах.</p>}
+          {myProjects.map((p) => (
+            <div key={p} style={{ marginBottom: 10 }}>
+              <div
+                className="row"
+                style={{ alignItems: 'center', cursor: 'pointer' }}
+                onClick={() => setEditProj(editProj === p ? null : p)}
+              >
+                <span style={{ width: 16, height: 16, borderRadius: 4, flex: 'none', background: projectColors[p] || 'var(--text-dim)', border: '1px solid var(--border)' }} />
+                <span className="chip project" style={{ flex: 'none' }}>{p}</span>
+                <span className="spacer" style={{ flex: 1 }} />
+                <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>{editProj === p ? 'скрыть' : 'изменить'}</span>
+              </div>
+              {editProj === p && (
+                <div className="swatches" style={{ marginTop: 8 }}>
+                  {PROJECT_PALETTE.map((c) => (
+                    <span key={c} className={`swatch ${projectColors[p] === c ? 'on' : ''}`} style={{ background: c }} onClick={() => setProjectColor(p, c)} />
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
 
           <button className="btn btn-ghost btn-block" style={{ marginTop: 28, color: 'var(--text-dim)' }} onClick={() => signOut(auth)}>
             Выйти

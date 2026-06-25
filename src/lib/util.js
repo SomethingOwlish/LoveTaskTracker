@@ -60,3 +60,18 @@ export function quadrant(importance, urgency) {
 export const ACTIVE_STATUSES = ['open', 'in_progress', 'returned', 'in_review'];
 export function isActive(t) { return ACTIVE_STATUSES.includes(t.status); }
 export function isClosed(t) { return t.status === 'done' || t.status === 'approved'; }
+
+// Проекты конкретного человека = те, что встречаются на задачах,
+// где он автор или исполнитель.
+export function projectsOf(tasks, uid) {
+  const s = new Set();
+  tasks.forEach((t) => {
+    if (t.authorUid === uid || t.assigneeUid === uid) (t.projectTags || []).forEach((p) => s.add(p));
+  });
+  return [...s].sort();
+}
+export function allTags(tasks) {
+  const s = new Set();
+  tasks.forEach((t) => (t.tags || []).forEach((x) => s.add(x)));
+  return [...s].sort();
+}

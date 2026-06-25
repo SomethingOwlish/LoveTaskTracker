@@ -2,25 +2,30 @@ import { Avatar } from './Avatar';
 import { toDate, fmtDate, quadrant, isClosed } from '../lib/util';
 import { completeTask, reopenTask, toggleLike } from '../lib/db';
 
-export function TaskCard({ task, me, userOf, onOpen }) {
+export function TaskCard({ task, me, userOf, onOpen, projectColors = {} }) {
   const author = userOf(task.authorUid);
   const assignee = userOf(task.assigneeUid);
   const closed = isClosed(task);
   const dl = toDate(task.deadline);
   const q = quadrant(task.priorityMatrix?.importance ?? 0, task.priorityMatrix?.urgency ?? 0);
   const liked = (task.likes || []).includes(me.uid);
+  const checkTotal = (task.checklist || []).length;
   const checkDone = (task.checklist || []).filter((c) => c.done).length;
+  const allDone = checkTotal > 0 && checkDone === checkTotal;
+
+  // цвет левой полоски: по первому проекту из настроек смотрящего, иначе акцент
+  const proj = (task.projectTags || [])[0];
+  const stripe = (proj && projectColors[proj]) || 'var(--accent)';
 
   const onCheck = (e) => {
     e.stopPropagation();
     if (closed) return reopenTask(task);
-    // задача на проверке закрывается только автором (через карточку задачи)
     if (task.status === 'in_review') return onOpen(task);
     return completeTask(task);
   };
 
   return (
-    <div className={`task ${closed ? 'done' : ''}`} onClick={() => onOpen(task)}>
+    <div className={`task ${closed ? 'done' : ''}`} style={{ borderLeftColor: stripe }} onClick={() => onOpen(task)}>
       <div className="task-top">
         <button
           className={`check ${closed ? 'on' : ''}`}
@@ -49,7 +54,11 @@ export function TaskCard({ task, me, userOf, onOpen }) {
         </span>
         {dl && <span>⌛ {fmtDate(dl)}</span>}
         <span>{q.label}</span>
-        {task.checklist?.length ? <span>☑ {checkDone}/{task.checklist.length}</span> : null}
+        {checkTotal > 0 && (
+          <span className="chip tag" style={allDone ? { color: 'var(--good)', borderColor: 'color-mix(in srgb, var(--good) 60%, transparent)' } : undefined}>
+            ☑ {checkDone}/{checkTotal}
+          </span>
+        )}
         {task.link && <span>🔗</span>}
       </div>
 

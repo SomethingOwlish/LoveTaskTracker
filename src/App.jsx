@@ -3,12 +3,14 @@ import { onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from
 import { auth, provider } from './firebase';
 import { ALLOWED_EMAILS, USERS, userByEmail } from './config';
 import { subscribeTasks, subscribeEvents } from './lib/db';
+import { projectsOf, allTags } from './lib/util';
 import { Avatar } from './components/Avatar';
 import { TasksView } from './components/TasksView';
 import { MatrixView } from './components/MatrixView';
 import { CalendarView } from './components/CalendarView';
 import { ProfileView, ACCENTS } from './components/ProfileView';
 import { TaskModal } from './components/TaskModal';
+import { Inbox, inboxItems } from './components/Inbox';
 
 const DEFAULT_ACCENT = { academia: '#d99873', cyberpunk: '#00f2ff' };
 
@@ -18,6 +20,10 @@ export default function App() {
   const [tasks, setTasks] = useState([]);
   const [events, setEvents] = useState([]);
   const [modal, setModal] = useState(null); // null | {} (new) | task (edit)
+  const [showInbox, setShowInbox] = useState(false);
+
+  // цвета проектов — у каждого свои (по email), хранятся локально
+  const [projectColors, setProjectColors] = useState({});
 
   // тема и акцент
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'academia');
@@ -58,6 +64,26 @@ export default function App() {
     const info = userByEmail(uid);
     return info ? { uid, email: uid, ...info } : { uid, email: uid, name: '?', avatar: 'owl' };
   };
+
+  // загрузка цветов проектов для текущего пользователя
+  useEffect(() => {
+    if (!me) return;
+    try {
+      setProjectColors(JSON.parse(localStorage.getItem('projectColors:' + me.email)) || {});
+    } catch { setProjectColors({}); }
+  }, [me?.email]);
+
+  const setProjectColor = (project, color) => {
+    setProjectColors((prev) => {
+      const next = { ...prev, [project]: color };
+      if (me) localStorage.setItem('projectColors:' + me.email, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const projectSuggestions = useMemo(() => (me ? projectsOf(tasks, me.uid) : []), [tasks, me?.uid]);
+  const tagSuggestions = useMemo(() => allTags(tasks), [tasks]);
+  const inbox = useMemo(() => (me ? inboxItems(tasks, me) : { total: 0 }), [tasks, me?.uid]);
 
   // ---- состояния входа ----
   if (user === undefined) {
@@ -114,15 +140,19 @@ export default function App() {
             <div className="sub">задачи на двоих</div>
           </div>
         </div>
+        <button className="bell" onClick={() => setShowInbox(true)} aria-label="Входящие">
+          🔔{inbox.total > 0 && <span className="bell-badge">{inbox.total}</span>}
+        </button>
       </div>
 
-      {tab === 'tasks' && <TasksView tasks={tasks} me={me} users={users} userOf={userOf} onOpen={setModal} />}
-      {tab === 'matrix' && <MatrixView tasks={tasks} onOpen={setModal} />}
+      {tab === 'tasks' && <TasksView tasks={tasks} me={me} users={users} userOf={userOf} onOpen={setModal} projectColors={projectColors} />}
+      {tab === 'matrix' && <MatrixView tasks={tasks} me={me} users={users} onOpen={setModal} projectColors={projectColors} />}
       {tab === 'calendar' && <CalendarView tasks={tasks} events={events} me={me} onOpen={setModal} />}
       {tab === 'profile' && (
         <ProfileView
           tasks={tasks} me={me} users={users}
           theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}
+          projectColors={projectColors} setProjectColor={setProjectColor}
         />
       )}
 
@@ -145,6 +175,12 @@ export default function App() {
         </button>
       </nav>
 
+      {showInbox && (
+        <Inbox tasks={tasks} me={me} userOf={userOf}
+          onOpen={(t) => { setShowInbox(false); setModal(t); }}
+          onClose={() => setShowInbox(false)} />
+      )}
+
       {modal !== null && (
         <TaskModal
           task={modal.id ? modal : null}
@@ -152,6 +188,8 @@ export default function App() {
           users={users}
           userOf={userOf}
           onClose={() => setModal(null)}
+          projectSuggestions={projectSuggestions}
+          tagSuggestions={tagSuggestions}
         />
       )}
     </div>

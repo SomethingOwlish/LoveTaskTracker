@@ -10,8 +10,18 @@ const eventsCol = collection(db, 'events');
 
 /* ---------------- Подписки (realtime) ---------------- */
 export function subscribeTasks(cb) {
-  const q = query(tasksCol, orderBy('createdAt', 'desc'));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+  // Без серверного orderBy: у новой задачи createdAt секунду = null и при
+  // orderBy она уходит вниз/не видна до ответа сервера. Сортируем на клиенте,
+  // считая новые (pending) самыми свежими — тогда они появляются сразу сверху.
+  return onSnapshot(tasksCol, (snap) => {
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    list.sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt));
+    cb(list);
+  });
+}
+function tsMs(ts) {
+  if (!ts) return Number.MAX_SAFE_INTEGER;
+  return ts.toMillis ? ts.toMillis() : new Date(ts).getTime();
 }
 export function subscribeEvents(cb) {
   const q = query(eventsCol, orderBy('date', 'asc'));

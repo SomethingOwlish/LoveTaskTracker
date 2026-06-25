@@ -2,12 +2,16 @@
    ОБЩИЕ СТИЛИ
    ============================================================ */
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; }
-body {
-  margin: 0;
+html {
+  min-height: 100%;
   background: var(--bg);
   background-image: var(--texture);
-  background-attachment: fixed;
+  background-attachment: scroll;
+}
+body, #root { min-height: 100dvh; }
+body {
+  margin: 0;
+  background: transparent;
   color: var(--text);
   font-family: var(--font-body);
   font-size: 16px;
@@ -37,6 +41,28 @@ a { color: var(--accent); }
   align-items: center;
   justify-content: space-between;
   padding: 14px 2px 16px;
+}
+.bell {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 44px; height: 44px;
+  font-size: 19px;
+  display: grid; place-items: center;
+  flex: none;
+}
+.bell-badge {
+  position: absolute;
+  top: -4px; right: -4px;
+  min-width: 20px; height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px; font-weight: 700;
+  display: grid; place-items: center;
+  box-shadow: var(--glow);
 }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand h1 { font-size: 19px; font-weight: 900; letter-spacing: -0.01em; }
@@ -144,6 +170,9 @@ a { color: var(--accent); }
   font-size: 15px;
 }
 textarea.input { resize: vertical; min-height: 70px; }
+input[type='datetime-local']::-webkit-calendar-picker-indicator {
+  opacity: 1; cursor: pointer; filter: invert(0.7); padding: 4px;
+}
 .row { display: flex; gap: 10px; }
 .row > * { flex: 1; }
 
@@ -270,8 +299,38 @@ textarea.input { resize: vertical; min-height: 70px; }
 }
 @keyframes rise { from { transform: translateY(20px); opacity: 0; } to { transform: none; opacity: 1; } }
 .sheet h2 { font-size: 20px; margin-bottom: 4px; }
-.sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-.sheet-head .close { background: transparent; border: 0; color: var(--text-dim); font-size: 22px; }
+.sheet-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--surface);
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 0 -18px 14px;
+  padding: 6px 18px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.sheet-head .close {
+  width: 44px; height: 44px;
+  flex: none;
+  margin: -4px -6px -4px 0;
+  font-size: 28px; line-height: 1;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.sheet-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  background: var(--surface);
+  margin: 16px -18px 0;
+  padding: 12px 18px calc(14px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  display: flex; gap: 10px;
+}
+.sheet-foot .btn { flex: 1; padding: 14px; font-size: 15px; }
 
 /* ---------- Матрица ---------- */
 .matrix-wrap { display: flex; flex-direction: column; gap: 8px; }

@@ -1,15 +1,11 @@
 import { useMemo, useState } from 'react';
 import { TaskCard } from './TaskCard';
-import { isActive, isClosed } from '../lib/util';
+import { isActive, isClosed, projectsOf } from '../lib/util';
 
-export function TasksView({ tasks, me, users, userOf, onOpen }) {
+export function TasksView({ tasks, me, users, userOf, onOpen, projectColors }) {
   const [filter, setFilter] = useState('active');
 
-  const projects = useMemo(() => {
-    const s = new Set();
-    tasks.forEach((t) => (t.projectTags || []).forEach((p) => s.add(p)));
-    return [...s];
-  }, [tasks]);
+  const projects = useMemo(() => projectsOf(tasks, me.uid), [tasks, me.uid]);
   const [project, setProject] = useState(null);
 
   const list = useMemo(() => {
@@ -53,7 +49,7 @@ export function TasksView({ tasks, me, users, userOf, onOpen }) {
       {list.length === 0 ? (
         <div className="empty">Здесь пусто. Жми «+», чтобы добавить задачу.</div>
       ) : (
-        list.map((t) => <TaskCard key={t.id} task={t} me={me} userOf={userOf} onOpen={onOpen} />)
+        list.map((t) => <TaskCard key={t.id} task={t} me={me} userOf={userOf} onOpen={onOpen} projectColors={projectColors} />)
       )}
     </div>
   );

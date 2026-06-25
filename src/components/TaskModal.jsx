@@ -15,13 +15,14 @@ function Switch({ on, onChange, label }) {
   );
 }
 
-function TagEditor({ value, onChange, placeholder, kind }) {
+function TagEditor({ value, onChange, placeholder, kind, suggestions = [] }) {
   const [text, setText] = useState('');
-  const add = () => {
-    const v = text.trim().replace(/^#/, '');
+  const add = (raw) => {
+    const v = (raw ?? text).trim().replace(/^#/, '');
     if (v && !value.includes(v)) onChange([...value, v]);
     setText('');
   };
+  const avail = suggestions.filter((s) => !value.includes(s));
   return (
     <div>
       <div className="chips" style={{ marginBottom: value.length ? 8 : 0 }}>
@@ -38,8 +39,18 @@ function TagEditor({ value, onChange, placeholder, kind }) {
         placeholder={placeholder}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
-        onBlur={add}
+        onBlur={() => add()}
       />
+      {avail.length > 0 && (
+        <div className="chips" style={{ marginTop: 8 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>есть:</span>
+          {avail.map((s) => (
+            <button type="button" key={s} className={`chip ${kind}`} style={{ opacity: 0.7, cursor: 'pointer' }} onClick={() => add(s)}>
+              {kind === 'project' ? s : '#' + s} +
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -81,7 +92,7 @@ function ChecklistEditor({ items, onChange }) {
   );
 }
 
-export function TaskModal({ task, me, users, userOf, onClose }) {
+export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions = [], tagSuggestions = [] }) {
   const editing = !!task;
   const [f, setF] = useState(() => ({
     title: task?.title || '',
@@ -155,7 +166,7 @@ export function TaskModal({ task, me, users, userOf, onClose }) {
 
         <div className="field">
           <label>Название</label>
-          <input className="input" value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="Что нужно сделать" autoFocus={!editing} />
+          <input className="input" value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="Что нужно сделать" />
         </div>
 
         <div className="field">
@@ -192,6 +203,11 @@ export function TaskModal({ task, me, users, userOf, onClose }) {
         <div className="field">
           <label>Дедлайн</label>
           <input className="input" type="datetime-local" value={f.deadline} onChange={(e) => set('deadline', e.target.value)} />
+          <div className="row" style={{ marginTop: 8 }}>
+            <button type="button" className="btn btn-sm" onClick={() => { const d = new Date(); d.setHours(18, 0, 0, 0); set('deadline', toLocalInput(d)); }}>Сегодня</button>
+            <button type="button" className="btn btn-sm" onClick={() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(18, 0, 0, 0); set('deadline', toLocalInput(d)); }}>Завтра</button>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => set('deadline', '')}>Очистить</button>
+          </div>
         </div>
 
         <div className="row">
@@ -207,11 +223,11 @@ export function TaskModal({ task, me, users, userOf, onClose }) {
 
         <div className="field">
           <label>Проекты</label>
-          <TagEditor value={f.projectTags} onChange={(v) => set('projectTags', v)} placeholder="Проект + Enter" kind="project" />
+          <TagEditor value={f.projectTags} onChange={(v) => set('projectTags', v)} placeholder="Проект + Enter" kind="project" suggestions={projectSuggestions} />
         </div>
         <div className="field">
           <label>Теги</label>
-          <TagEditor value={f.tags} onChange={(v) => set('tags', v)} placeholder="Тег + Enter" kind="tag" />
+          <TagEditor value={f.tags} onChange={(v) => set('tags', v)} placeholder="Тег + Enter" kind="tag" suggestions={tagSuggestions} />
         </div>
 
         <div className="field">
@@ -276,20 +292,24 @@ export function TaskModal({ task, me, users, userOf, onClose }) {
           </>
         )}
 
-        {/* Действия */}
-        <div className="row" style={{ marginTop: 18 }}>
-          <button className="btn btn-accent" onClick={save}>{editing ? 'Сохранить' : 'Создать'}</button>
-          {editing && (task.status === 'done' || task.status === 'approved'
-            ? <button className="btn" style={{ flex: 'none' }} onClick={async () => { await reopenTask(task); onClose(); }}>В работу</button>
-            : <button className="btn" style={{ flex: 'none' }} onClick={async () => { await completeTask(task); onClose(); }}>Выполнено</button>
-          )}
-        </div>
+        {/* Вторичные действия */}
         {editing && (
-          <button className="btn btn-ghost btn-block" style={{ marginTop: 10, color: 'var(--bad)' }}
-            onClick={async () => { if (confirm('Удалить задачу?')) { await deleteTask(task.id); onClose(); } }}>
-            Удалить
-          </button>
+          <div className="row" style={{ marginTop: 16 }}>
+            {(task.status === 'done' || task.status === 'approved')
+              ? <button className="btn" onClick={async () => { await reopenTask(task); onClose(); }}>Вернуть в работу</button>
+              : <button className="btn" onClick={async () => { await completeTask(task); onClose(); }}>Выполнено</button>}
+            <button className="btn btn-ghost" style={{ flex: 'none', color: 'var(--bad)' }}
+              onClick={async () => { if (confirm('Удалить задачу?')) { await deleteTask(task.id); onClose(); } }}>
+              Удалить
+            </button>
+          </div>
         )}
+
+        {/* Липкая панель снизу: всегда под большим пальцем */}
+        <div className="sheet-foot">
+          <button className="btn" onClick={onClose}>Отмена</button>
+          <button className="btn btn-accent" onClick={save}>{editing ? 'Сохранить' : 'Создать'}</button>
+        </div>
       </div>
     </div>
   );
