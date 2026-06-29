@@ -2,15 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
 import { auth, provider } from './firebase';
 import { ALLOWED_EMAILS, USERS, userByEmail } from './config';
-import { subscribeTasks, subscribeEvents } from './lib/db';
-import { projectsOf, allTags } from './lib/util';
+import { subscribeTasks, subscribeEvents, subscribeNotifications, clearNotifications } from './lib/db';
+import { projectsOf, allTags, tsMs } from './lib/util';
 import { Avatar } from './components/Avatar';
 import { TasksView } from './components/TasksView';
 import { MatrixView } from './components/MatrixView';
 import { CalendarView } from './components/CalendarView';
-import { ProfileView, ACCENTS } from './components/ProfileView';
+import { ProfileView } from './components/ProfileView';
 import { TaskModal } from './components/TaskModal';
-import { Inbox, inboxItems } from './components/Inbox';
+import { Inbox, unreadCount } from './components/Inbox';
 
 const DEFAULT_ACCENT = { academia: '#d99873', cyberpunk: '#00f2ff' };
 
@@ -25,19 +25,29 @@ export default function App() {
   // цвета проектов — у каждого свои (по email), хранятся локально
   const [projectColors, setProjectColors] = useState({});
 
-  // тема и акцент
-  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'academia');
-  const [accent, setAccent] = useState(() => localStorage.getItem('accent') || DEFAULT_ACCENT.academia);
+  // уведомления
+  const [notifs, setNotifs] = useState([]);
+  const [readAt, setReadAt] = useState(0);   // когда в последний раз открывали список
+  const [viewedFrom, setViewedFrom] = useState(0); // снимок для подсветки в открытом списке
+
+  // тема и акцент. Акцент храним отдельно для каждой темы — поддерживает свой цвет.
+  const initialTheme = localStorage.getItem('theme') || 'academia';
+  const [theme, setThemeState] = useState(initialTheme);
+  const [accent, setAccent] = useState(() => localStorage.getItem('accent:' + initialTheme) || DEFAULT_ACCENT[initialTheme]);
+
+  const setTheme = (t) => {
+    setThemeState(t);
+    setAccent(localStorage.getItem('accent:' + t) || DEFAULT_ACCENT[t]);
+  };
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
-    // если акцент не из палитры новой темы — берём дефолтный для темы
-    const ok = (ACCENTS[theme] || []).some((a) => a.c === accent);
-    const eff = ok ? accent : DEFAULT_ACCENT[theme];
-    if (eff !== accent) setAccent(eff);
-    document.documentElement.style.setProperty('--accent', eff);
-    localStorage.setItem('accent', eff);
+  }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty('--accent', accent);
+    localStorage.setItem('accent:' + theme, accent);
   }, [theme, accent]);
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
@@ -73,6 +83,29 @@ export default function App() {
     } catch { setProjectColors({}); }
   }, [me?.email]);
 
+  // подписка на уведомления + загрузка времени последнего прочтения
+  useEffect(() => {
+    if (!me) return;
+    setReadAt(Number(localStorage.getItem('notifReadAt:' + me.email)) || 0);
+    return subscribeNotifications(me.uid, setNotifs);
+  }, [me?.uid]);
+
+  const unread = useMemo(() => unreadCount(notifs, readAt), [notifs, readAt]);
+
+  const openInbox = () => {
+    setViewedFrom(readAt);
+    setShowInbox(true);
+    const now = Date.now();
+    setReadAt(now);
+    if (me) localStorage.setItem('notifReadAt:' + me.email, String(now));
+  };
+
+  const openFromNotif = (taskId) => {
+    const t = tasks.find((x) => x.id === taskId);
+    setShowInbox(false);
+    if (t) setModal(t);
+  };
+
   const setProjectColor = (project, color) => {
     setProjectColors((prev) => {
       const next = { ...prev, [project]: color };
@@ -83,7 +116,6 @@ export default function App() {
 
   const projectSuggestions = useMemo(() => (me ? projectsOf(tasks, me.uid) : []), [tasks, me?.uid]);
   const tagSuggestions = useMemo(() => allTags(tasks), [tasks]);
-  const inbox = useMemo(() => (me ? inboxItems(tasks, me) : { total: 0 }), [tasks, me?.uid]);
 
   // ---- состояния входа ----
   if (user === undefined) {
@@ -140,8 +172,9 @@ export default function App() {
             <div className="sub">задачи на двоих</div>
           </div>
         </div>
-        <button className="bell" onClick={() => setShowInbox(true)} aria-label="Входящие">
-          🔔{inbox.total > 0 && <span className="bell-badge">{inbox.total}</span>}
+        <button className="bell" onClick={openInbox} aria-label="Уведомления">
+          <i className="fa-solid fa-bell" />
+          {unread > 0 && <span className="bell-badge">{unread}</span>}
         </button>
       </div>
 
@@ -176,8 +209,9 @@ export default function App() {
       </nav>
 
       {showInbox && (
-        <Inbox tasks={tasks} me={me} userOf={userOf}
-          onOpen={(t) => { setShowInbox(false); setModal(t); }}
+        <Inbox notifs={notifs} userOf={userOf} viewedFrom={viewedFrom}
+          onOpen={openFromNotif}
+          onClear={() => clearNotifications(notifs)}
           onClose={() => setShowInbox(false)} />
       )}
 
