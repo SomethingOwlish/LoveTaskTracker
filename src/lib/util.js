@@ -6,6 +6,13 @@ export function toDate(ts) {
   return new Date(ts);
 }
 
+// Время в миллисекундах. У свежесозданного документа serverTimestamp ещё
+// null — считаем его «самым свежим», чтобы он был сверху и помечался непрочитанным.
+export function tsMs(ts) {
+  if (!ts) return Number.MAX_SAFE_INTEGER;
+  return ts.toMillis ? ts.toMillis() : new Date(ts).getTime();
+}
+
 export function isSameDay(a, b) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }

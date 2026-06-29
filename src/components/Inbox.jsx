@@ -1,50 +1,57 @@
 import { Avatar } from './Avatar';
-import { toDate, fmtDate } from '../lib/util';
+import { tsMs } from '../lib/util';
 
-// Считаем, что требует внимания именно меня.
-export function inboxItems(tasks, me) {
-  const review = tasks.filter((t) => t.status === 'in_review' && t.authorUid === me.uid);
-  const assigned = tasks.filter((t) => t.assigneeUid === me.uid && t.authorUid !== me.uid && ['open', 'in_progress'].includes(t.status));
-  const returned = tasks.filter((t) => t.status === 'returned' && t.assigneeUid === me.uid);
-  return { review, assigned, returned, total: review.length + assigned.length + returned.length };
-}
+// Описание каждого типа уведомления: иконка (Font Awesome) и текст действия.
+const TYPES = {
+  assigned: { icon: 'fa-solid fa-clipboard-list', verb: 'поставил(а) задачу' },
+  comment: { icon: 'fa-solid fa-comment', verb: 'оставил(а) комментарий' },
+  like: { icon: 'fa-solid fa-heart', verb: 'оценил(а) задачу' },
+};
 
-function Group({ title, items, userOf, onOpen, icon }) {
-  if (!items.length) return null;
-  return (
-    <>
-      <div className="section-title" style={{ marginTop: 14 }}>{icon} {title} · {items.length}</div>
-      {items.map((t) => {
-        const other = userOf(t.authorUid);
-        const dl = toDate(t.deadline);
-        return (
-          <div key={t.id} className="task" style={{ marginBottom: 8 }} onClick={() => onOpen(t)}>
-            <div className="task-top"><h3 style={{ fontSize: 15 }}>{t.title}</h3></div>
-            <div className="task-meta">
-              <span className="who"><Avatar email={other?.email} avatar={other?.avatar} /> {other?.name}</span>
-              {dl && <span>⌛ {fmtDate(dl)}</span>}
-            </div>
-          </div>
-        );
-      })}
-    </>
-  );
-}
-
-export function Inbox({ tasks, me, userOf, onOpen, onClose }) {
-  const { review, assigned, returned, total } = inboxItems(tasks, me);
+export function Inbox({ notifs, userOf, onOpen, onClose, onClear, viewedFrom = 0 }) {
   return (
     <div className="overlay" onClick={onClose}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-head">
-          <h2>Входящие</h2>
+          <h2>Уведомления</h2>
           <button className="close" onClick={onClose} aria-label="Закрыть">×</button>
         </div>
-        {total === 0 && <p className="empty">Всё разобрано — пусто 🙌</p>}
-        <Group title="Проверить" items={review} userOf={userOf} onOpen={onOpen} icon="🔎" />
-        <Group title="Назначено тебе" items={assigned} userOf={userOf} onOpen={onOpen} icon="📥" />
-        <Group title="Вернули на доработку" items={returned} userOf={userOf} onOpen={onOpen} icon="↩️" />
+
+        {notifs.length === 0 ? (
+          <p className="empty"><i className="fa-regular fa-bell-slash" style={{ marginRight: 8 }} />Пока пусто.</p>
+        ) : (
+          <>
+            <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 10 }}>
+              <button className="btn btn-sm btn-ghost" style={{ flex: 'none', color: 'var(--text-dim)' }} onClick={onClear}>
+                <i className="fa-solid fa-trash" style={{ marginRight: 6 }} />Очистить все
+              </button>
+            </div>
+            {notifs.map((n) => {
+              const t = TYPES[n.type] || TYPES.comment;
+              const actor = userOf(n.actorUid);
+              const fresh = tsMs(n.createdAt) > viewedFrom;
+              return (
+                <div key={n.id} className={`notif ${fresh ? 'fresh' : ''}`} onClick={() => onOpen(n.taskId)}>
+                  <span className={`notif-ico ${n.type}`}><i className={t.icon} /></span>
+                  <div className="notif-body">
+                    <div className="notif-line">
+                      <span className="who"><Avatar email={actor?.email} avatar={actor?.avatar} /> {actor?.name || '—'}</span>{' '}
+                      {t.verb}
+                    </div>
+                    <div className="notif-title">{n.taskTitle || 'Задача'}</div>
+                    {n.type === 'comment' && n.text && <div className="notif-text">«{n.text}»</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
       </div>
     </div>
   );
+}
+
+// Сколько уведомлений новее последнего просмотра.
+export function unreadCount(notifs, readAt) {
+  return notifs.filter((n) => tsMs(n.createdAt) > readAt).length;
 }

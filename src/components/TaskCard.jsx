@@ -8,7 +8,8 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {} }) {
   const closed = isClosed(task);
   const dl = toDate(task.deadline);
   const q = quadrant(task.priorityMatrix?.importance ?? 0, task.priorityMatrix?.urgency ?? 0);
-  const liked = (task.likes || []).includes(me.uid);
+  const liked = (task.likes || []).length > 0;
+  const canLike = task.assigneeUid !== me.uid; // сердечко ставит только другой партнёр
   const checkTotal = (task.checklist || []).length;
   const checkDone = (task.checklist || []).filter((c) => c.done).length;
   const allDone = checkTotal > 0 && checkDone === checkTotal;
@@ -67,12 +68,17 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {} }) {
           от <Avatar email={author?.email} avatar={author?.avatar} /> {author?.name}
         </span>
         <span className="spacer" />
-        <button
-          className={`like ${liked ? 'on' : ''}`}
-          onClick={(e) => { e.stopPropagation(); toggleLike(task, me.uid); }}
-        >
-          {liked ? '♥' : '♡'} {task.likes?.length || 0}
-        </button>
+        {canLike ? (
+          <button
+            className={`like ${liked ? 'on' : ''}`}
+            onClick={(e) => { e.stopPropagation(); toggleLike(task, me.uid); }}
+            aria-label={liked ? 'Убрать сердечко' : 'Поставить сердечко'}
+          >
+            {liked ? '♥' : '♡'}
+          </button>
+        ) : (
+          liked && <span className="like on" aria-label="Партнёру нравится">♥</span>
+        )}
       </div>
     </div>
   );

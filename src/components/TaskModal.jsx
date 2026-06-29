@@ -248,6 +248,7 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
               <option value="none">Без повтора</option>
               <option value="daily">Каждый день</option>
               <option value="weekly">Каждую неделю</option>
+              <option value="biweekly">Раз в две недели</option>
               <option value="monthly">Каждый месяц</option>
             </select>
           </div>
@@ -286,8 +287,8 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
             })}
             <div className="row" style={{ marginTop: 6 }}>
               <input className="input" value={cText} onChange={(e) => setCText(e.target.value)} placeholder="Написать…"
-                onKeyDown={(e) => { if (e.key === 'Enter') { addComment(task.id, me.uid, cText); setCText(''); } }} />
-              <button className="btn" style={{ flex: 'none' }} onClick={() => { addComment(task.id, me.uid, cText); setCText(''); }}>→</button>
+                onKeyDown={(e) => { if (e.key === 'Enter') { addComment(task, me.uid, cText); setCText(''); } }} />
+              <button className="btn" style={{ flex: 'none' }} onClick={() => { addComment(task, me.uid, cText); setCText(''); }}>→</button>
             </div>
           </>
         )}

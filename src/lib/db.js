@@ -1,12 +1,14 @@
 import { db } from '../firebase';
 import {
   collection, doc, addDoc, updateDoc, deleteDoc,
-  onSnapshot, query, orderBy, serverTimestamp, Timestamp, arrayUnion, arrayRemove,
+  onSnapshot, query, orderBy, where, serverTimestamp, Timestamp, arrayUnion, arrayRemove,
 } from 'firebase/firestore';
 import { nextRecurrence } from './recurrence';
+import { tsMs } from './util';
 
 const tasksCol = collection(db, 'tasks');
 const eventsCol = collection(db, 'events');
+const notifsCol = collection(db, 'notifications');
 
 /* ---------------- Подписки (realtime) ---------------- */
 export function subscribeTasks(cb) {
@@ -19,10 +21,6 @@ export function subscribeTasks(cb) {
     cb(list);
   });
 }
-function tsMs(ts) {
-  if (!ts) return Number.MAX_SAFE_INTEGER;
-  return ts.toMillis ? ts.toMillis() : new Date(ts).getTime();
-}
 export function subscribeEvents(cb) {
   const q = query(eventsCol, orderBy('date', 'asc'));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
@@ -34,11 +32,13 @@ export function subscribeComments(taskId, cb) {
 
 /* ---------------- Задачи ---------------- */
 export async function createTask(data) {
-  return addDoc(tasksCol, {
-    title: data.title?.trim() || 'Без названия',
+  const title = data.title?.trim() || 'Без названия';
+  const assigneeUid = data.assigneeUid || data.authorUid;
+  const ref = await addDoc(tasksCol, {
+    title,
     description: data.description || '',
     authorUid: data.authorUid,
-    assigneeUid: data.assigneeUid || data.authorUid,
+    assigneeUid,
     status: 'open',
     needsReview: !!data.needsReview,
     priorityMatrix: { importance: data.importance ?? 0, urgency: data.urgency ?? 0 },
@@ -55,6 +55,11 @@ export async function createTask(data) {
     updatedAt: serverTimestamp(),
     completedAt: null,
   });
+  // задачу поставил другой — уведомляем исполнителя
+  if (assigneeUid && assigneeUid !== data.authorUid) {
+    await addNotification({ type: 'assigned', taskId: ref.id, taskTitle: title, actorUid: data.authorUid, recipientUid: assigneeUid });
+  }
+  return ref;
 }
 
 export async function updateTask(id, patch) {
@@ -71,9 +76,13 @@ export async function deleteTask(id) {
 
 export async function toggleLike(task, uid) {
   const has = (task.likes || []).includes(uid);
-  return updateDoc(doc(db, 'tasks', task.id), {
+  await updateDoc(doc(db, 'tasks', task.id), {
     likes: has ? arrayRemove(uid) : arrayUnion(uid),
   });
+  // поставили лайк — уведомляем исполнителя (чью задачу оценили)
+  if (!has && task.assigneeUid && task.assigneeUid !== uid) {
+    await addNotification({ type: 'like', taskId: task.id, taskTitle: task.title, actorUid: uid, recipientUid: task.assigneeUid });
+  }
 }
 
 /* Отметить «выполнено» с учётом ревью-флоу и повторений. */
@@ -138,11 +147,35 @@ async function maybeSpawnRecurrence(task) {
 }
 
 /* ---------------- Комментарии ---------------- */
-export async function addComment(taskId, authorUid, text) {
+export async function addComment(task, authorUid, text) {
   if (!text.trim()) return;
-  return addDoc(collection(db, 'tasks', taskId, 'comments'), {
-    authorUid, text: text.trim(), createdAt: serverTimestamp(),
+  const clean = text.trim();
+  await addDoc(collection(db, 'tasks', task.id, 'comments'), {
+    authorUid, text: clean, createdAt: serverTimestamp(),
   });
+  // уведомляем других участников задачи (автора/исполнителя), но не себя
+  const recipients = [...new Set([task.authorUid, task.assigneeUid])].filter((u) => u && u !== authorUid);
+  await Promise.all(recipients.map((r) =>
+    addNotification({ type: 'comment', taskId: task.id, taskTitle: task.title, actorUid: authorUid, recipientUid: r, text: clean.slice(0, 80) })
+  ));
+}
+
+/* ---------------- Уведомления ---------------- */
+export function subscribeNotifications(uid, cb) {
+  const q = query(notifsCol, where('recipientUid', '==', uid));
+  return onSnapshot(q, (snap) => {
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    list.sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt));
+    cb(list);
+  });
+}
+
+async function addNotification(n) {
+  return addDoc(notifsCol, { ...n, createdAt: serverTimestamp() });
+}
+
+export async function clearNotifications(list) {
+  await Promise.all((list || []).map((n) => deleteDoc(doc(db, 'notifications', n.id))));
 }
 
 /* ---------------- События календаря ---------------- */

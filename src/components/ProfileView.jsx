@@ -33,11 +33,17 @@ function statsFor(tasks, uid) {
   let open = 0, doneToday = 0, doneWeek = 0;
   tasks.forEach((t) => {
     if (t.assigneeUid !== uid) return;
-    if (isActive(t)) open++;
+    // каждый пункт чеклиста считаем отдельной задачей; без чеклиста — сама задача
+    const checklist = t.checklist || [];
+    const hasList = checklist.length > 0;
+    if (isActive(t)) {
+      open += hasList ? checklist.filter((c) => !c.done).length : 1;
+    }
     if (isClosed(t)) {
       const c = toDate(t.completedAt);
-      if (c && c >= today) doneToday++;
-      if (c && c >= week) doneWeek++;
+      const units = hasList ? checklist.length : 1;
+      if (c && c >= today) doneToday += units;
+      if (c && c >= week) doneWeek += units;
     }
   });
   return { open, doneToday, doneWeek };
@@ -49,6 +55,7 @@ export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAcce
   const s = statsFor(tasks, view);
   const myProjects = projectsOf(tasks, me.uid);
   const [editProj, setEditProj] = useState(null);
+  const customAccent = !(ACCENTS[theme] || []).some((a) => a.c === accent);
 
   return (
     <div>
@@ -93,6 +100,14 @@ export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAcce
                 onClick={() => setAccent(a.c)}
               />
             ))}
+            <label
+              className={`swatch custom ${customAccent ? 'on' : ''}`}
+              title="Свой цвет"
+              style={customAccent ? { background: accent } : undefined}
+            >
+              <i className="fa-solid fa-eye-dropper" />
+              <input type="color" value={accent} onChange={(e) => setAccent(e.target.value)} />
+            </label>
           </div>
 
           <div className="section-title">Цвета проектов</div>
@@ -114,6 +129,14 @@ export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAcce
                   {PROJECT_PALETTE.map((c) => (
                     <span key={c} className={`swatch ${projectColors[p] === c ? 'on' : ''}`} style={{ background: c }} onClick={() => setProjectColor(p, c)} />
                   ))}
+                  <label
+                    className={`swatch custom ${projectColors[p] && !PROJECT_PALETTE.includes(projectColors[p]) ? 'on' : ''}`}
+                    title="Свой цвет"
+                    style={projectColors[p] && !PROJECT_PALETTE.includes(projectColors[p]) ? { background: projectColors[p] } : undefined}
+                  >
+                    <i className="fa-solid fa-eye-dropper" />
+                    <input type="color" value={projectColors[p] || '#888888'} onChange={(e) => setProjectColor(p, e.target.value)} />
+                  </label>
                 </div>
               )}
             </div>
