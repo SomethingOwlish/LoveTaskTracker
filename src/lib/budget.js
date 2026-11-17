@@ -1,17 +1,20 @@
 import { db } from '../firebase';
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, writeBatch,
-  onSnapshot, serverTimestamp, Timestamp,
+  onSnapshot, serverTimestamp, Timestamp, increment, query, where, orderBy, limit,
 } from 'firebase/firestore';
 import { USERS } from '../config';
 import { tsMs, toDate } from './util';
 
 /* Модель:
-   wallets/{id}        { name, icon, color, order, initial, archived, ownerUid? }
+   wallets/{id}        { name, icon, color, order, balance, archived, ownerUid? }
+   balance и income/expense у проектов — счётчики, которые меняются тем же
+   батчем, что и операция (increment). Поэтому для остатков не нужно читать
+   всю историю: грузим только операции открытого месяца и запланированные.
    budgetTx/{id}       { type: income|expense|transfer, amount, walletId|null, toWalletId?,
                          category, note, date, planned, projectId|null, receiptId|null,
                          items: [{id,title,amount,category}], authorUid, createdAt }
-   budgetProjects/{id} { name, note, color, archived, createdAt }
+   budgetProjects/{id} { name, note, color, target, income, expense, archived, createdAt }
    receipts/{id}       { status: new|parsed, thumb, qr: {sum,date,raw}|null, txId|null, authorUid, createdAt }
    receiptImages/{id}  { data }  — полное фото отдельно, чтобы список чеков грузился быстро */
 
@@ -63,27 +66,42 @@ export function catIcon(id, type) {
 }
 
 /* ---------- Подписки ---------- */
-function sub(col, cb, sort) {
-  return onSnapshot(col, { includeMetadataChanges: false }, (snap) => {
+function sub(q, cb, sort) {
+  return onSnapshot(q, (snap) => {
     const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     if (sort) list.sort(sort);
     cb(list, snap);
-  });
+  }, (e) => console.warn('budget subscription', e));
 }
+const byDateDesc = (a, b) => tsMs(b.date) - tsMs(a.date) || tsMs(b.createdAt) - tsMs(a.createdAt);
+
 export const subscribeWallets = (cb) => sub(walletsCol, (list, snap) => {
   // первый запуск: кошельков нет на сервере — заводим стандартные.
   // setDoc с фиксированными id идемпотентен, гонка двух телефонов не страшна.
   if (!list.length && !snap.metadata.fromCache) {
-    DEFAULT_WALLETS.forEach(({ id, ...w }) => setDoc(doc(walletsCol, id), { ...w, initial: 0, archived: false }, { merge: true }));
+    DEFAULT_WALLETS.forEach(({ id, ...w }) => setDoc(doc(walletsCol, id), { ...w, balance: 0, archived: false }, { merge: true }));
   }
   cb(list);
 }, (a, b) => (a.order ?? 0) - (b.order ?? 0));
-export const subscribeTx = (cb) => sub(txCol, cb, (a, b) => tsMs(b.date) - tsMs(a.date) || tsMs(b.createdAt) - tsMs(a.createdAt));
+
+// Операции за месяц [from, to)
+export const subscribeTxRange = (from, to, cb) => sub(
+  query(txCol, where('date', '>=', Timestamp.fromDate(from)), where('date', '<', Timestamp.fromDate(to))), cb, byDateDesc);
+// Все запланированные (их немного, и нужны просроченные из прошлых месяцев)
+export const subscribePlanned = (cb) => sub(query(txCol, where('planned', '==', true)), cb, byDateDesc);
+// Операции одного проекта — только когда проект открыт
+export const subscribeProjectTx = (projectId, cb) => sub(query(txCol, where('projectId', '==', projectId)), cb, byDateDesc);
 export const subscribeProjects = (cb) => sub(projCol, cb, (a, b) => tsMs(b.createdAt) - tsMs(a.createdAt));
-export const subscribeReceipts = (cb) => sub(receiptsCol, cb, (a, b) => tsMs(b.createdAt) - tsMs(a.createdAt));
+// Неразобранные чеки — живьём; весь архив чеков — по запросу
+export const subscribeReceipts = (cb) => sub(query(receiptsCol, where('status', '==', 'new')), cb, (a, b) => tsMs(b.createdAt) - tsMs(a.createdAt));
+export const subscribeAllReceipts = (cb) => sub(query(receiptsCol, orderBy('createdAt', 'desc'), limit(60)), cb);
+export async function fetchTx(id) {
+  const s = await getDoc(doc(txCol, id));
+  return s.exists() ? { id: s.id, ...s.data() } : null;
+}
 
 /* ---------- Кошельки ---------- */
-export const saveWallet = (id, data) => (id ? updateDoc(doc(walletsCol, id), data) : addDoc(walletsCol, { ...data, archived: false }));
+export const saveWallet = (id, data) => (id ? updateDoc(doc(walletsCol, id), data) : addDoc(walletsCol, { balance: 0, ...data, archived: false }));
 
 /* ---------- Операции ---------- */
 function txData(d) {
@@ -102,34 +120,81 @@ function txData(d) {
   };
 }
 
-export async function saveTx(id, d, authorUid) {
+// Как операция двигает счётчики (запланированная — никак).
+function effects(t, sign = 1) {
+  const w = {}; const p = {};
+  if (!t || t.planned) return { w, p };
+  const a = (Number(t.amount) || 0) * sign;
+  const add = (id, v) => { if (id) w[id] = (w[id] || 0) + v; };
+  if (t.type === 'income') add(t.walletId, a);
+  if (t.type === 'expense') add(t.walletId, -a);
+  if (t.type === 'transfer') { add(t.walletId, -a); add(t.toWalletId, a); }
+  if (t.projectId && (t.type === 'income' || t.type === 'expense')) p[t.projectId] = { [t.type]: a };
+  return { w, p };
+}
+
+// Применить разницу «новое минус старое» к кошелькам и проектам в батче.
+// known — id существующих кошельков/проектов: обновлять удалённый документ нельзя,
+// иначе весь батч упадёт.
+function applyEffects(batch, next, prev, known) {
+  const n = effects(next, 1);
+  const o = effects(prev, -1);
+  const wd = { ...n.w };
+  Object.entries(o.w).forEach(([k, v]) => { wd[k] = (wd[k] || 0) + v; });
+  Object.entries(wd).forEach(([id, v]) => {
+    const r = Math.round(v * 100) / 100;
+    if (r && known.wallets.has(id)) batch.update(doc(walletsCol, id), { balance: increment(r) });
+  });
+  const pd = {};
+  [n.p, o.p].forEach((m) => Object.entries(m).forEach(([id, x]) => {
+    pd[id] ||= { income: 0, expense: 0 };
+    pd[id].income += x.income || 0;
+    pd[id].expense += x.expense || 0;
+  }));
+  Object.entries(pd).forEach(([id, x]) => {
+    const patch = {};
+    if (Math.round(x.income * 100)) patch.income = increment(Math.round(x.income * 100) / 100);
+    if (Math.round(x.expense * 100)) patch.expense = increment(Math.round(x.expense * 100) / 100);
+    if (Object.keys(patch).length && known.projects.has(id)) batch.update(doc(projCol, id), patch);
+  });
+}
+
+export async function saveTx(prev, d, authorUid, known) {
   const batch = writeBatch(db);
-  const ref = id ? doc(txCol, id) : doc(txCol);
+  const ref = prev ? doc(txCol, prev.id) : doc(txCol);
   const data = txData(d);
-  if (id) batch.update(ref, { ...data, updatedAt: serverTimestamp() });
+  if (prev) batch.update(ref, { ...data, updatedAt: serverTimestamp() });
   else batch.set(ref, { ...data, authorUid, createdAt: serverTimestamp() });
+  applyEffects(batch, data, prev, known);
   // чек привязан к операции → считаем разобранным
   if (data.receiptId) batch.update(doc(receiptsCol, data.receiptId), { status: 'parsed', txId: ref.id });
-  if (d.prevReceiptId && d.prevReceiptId !== data.receiptId) {
-    batch.update(doc(receiptsCol, d.prevReceiptId), { status: 'new', txId: null });
+  if (prev?.receiptId && prev.receiptId !== data.receiptId) {
+    batch.update(doc(receiptsCol, prev.receiptId), { status: 'new', txId: null });
   }
   return batch.commit();
 }
 
-export async function deleteTx(tx) {
+export async function deleteTx(tx, known) {
   const batch = writeBatch(db);
   batch.delete(doc(txCol, tx.id));
+  applyEffects(batch, null, tx, known);
   if (tx.receiptId) batch.update(doc(receiptsCol, tx.receiptId), { status: 'new', txId: null });
   return batch.commit();
 }
 
 // Провести запланированную операцию сегодняшним числом
-export const commitPlanned = (tx) => updateDoc(doc(txCol, tx.id), { planned: false, date: Timestamp.now() });
+export async function commitPlanned(tx, known) {
+  const batch = writeBatch(db);
+  const now = Timestamp.now();
+  batch.update(doc(txCol, tx.id), { planned: false, date: now });
+  applyEffects(batch, { ...tx, planned: false }, null, known);
+  return batch.commit();
+}
 
 /* ---------- Проекты ---------- */
 export const saveProject = (id, data) => (id
   ? updateDoc(doc(projCol, id), data)
-  : addDoc(projCol, { ...data, archived: false, createdAt: serverTimestamp() }));
+  : addDoc(projCol, { ...data, income: 0, expense: 0, archived: false, createdAt: serverTimestamp() }));
 export const deleteProject = (id) => deleteDoc(doc(projCol, id));
 
 /* ---------- Чеки ---------- */
@@ -140,6 +205,10 @@ export async function addReceipt({ image, thumb, qr, authorUid }) {
   batch.set(ref, { status: 'new', thumb, qr: qr || null, txId: null, authorUid, createdAt: serverTimestamp() });
   batch.commit().catch((e) => alert('Чек не сохранился: ' + e.message));
   return ref.id;
+}
+export async function fetchReceipt(id) {
+  const s = await getDoc(doc(receiptsCol, id));
+  return s.exists() ? { id: s.id, ...s.data() } : null;
 }
 export async function loadReceiptImage(id) {
   const s = await getDoc(doc(db, 'receiptImages', id));
@@ -154,19 +223,9 @@ export async function deleteReceipt(r) {
 }
 
 /* ---------- Подсчёты ---------- */
-export function walletBalances(wallets, txs) {
+export function walletBalances(wallets) {
   const bal = {};
-  wallets.forEach((w) => { bal[w.id] = Number(w.initial) || 0; });
-  txs.forEach((t) => {
-    if (t.planned) return;
-    const a = Number(t.amount) || 0;
-    if (t.type === 'income' && t.walletId in bal) bal[t.walletId] += a;
-    if (t.type === 'expense' && t.walletId in bal) bal[t.walletId] -= a;
-    if (t.type === 'transfer') {
-      if (t.walletId in bal) bal[t.walletId] -= a;
-      if (t.toWalletId in bal) bal[t.toWalletId] += a;
-    }
-  });
+  wallets.forEach((w) => { bal[w.id] = Math.round((Number(w.balance) || 0) * 100) / 100; });
   return bal;
 }
 

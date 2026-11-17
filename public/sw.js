@@ -1,6 +1,6 @@
 // Простой service worker: кэшируем оболочку приложения для офлайн-открытия.
 // Данные всё равно тянутся из Firestore при наличии сети.
-const CACHE = 'ltt-v2';
+const CACHE = 'ltt-v3';
 const SHELL = ['./', './index.html', './manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
@@ -18,6 +18,8 @@ self.addEventListener('fetch', (e) => {
   // Никогда не кэшируем запросы Firebase/Google — только статику своего origin.
   if (url.origin !== self.location.origin) return;
   if (e.request.method !== 'GET') return;
+  // служебные страницы входа Firebase — всегда из сети и никогда не в кэш
+  if (url.pathname.startsWith('/__/')) return;
 
   // HTML — сначала сеть: иначе после деплоя телефон показывает старую версию
   // до второго перезапуска. Без сети — из кэша.

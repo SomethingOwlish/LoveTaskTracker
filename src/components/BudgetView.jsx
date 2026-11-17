@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet, Seg, Switch, loadPref, savePref } from './Sheet';
 import { Avatar } from './Avatar';
 import {
-  subscribeWallets, subscribeTx, subscribeProjects, subscribeReceipts,
+  subscribeWallets, subscribeTxRange, subscribePlanned, subscribeProjectTx, subscribeProjects,
+  subscribeReceipts, subscribeAllReceipts, fetchTx, fetchReceipt,
   saveWallet, saveTx, deleteTx, commitPlanned, saveProject, deleteProject,
   addReceipt, loadReceiptImage, deleteReceipt,
   walletBalances, inMonth, byCategory, totals, catIcon,
@@ -15,28 +16,44 @@ const TYPE_LABEL = { expense: 'Расход', income: 'Доход', transfer: '�
 
 export function BudgetView({ me, userOf }) {
   const [wallets, setWallets] = useState([]);
-  const [txs, setTxs] = useState([]);
+  const [monthTx, setMonthTx] = useState([]);
+  const [planned, setPlanned] = useState([]);
   const [projects, setProjects] = useState([]);
   const [receipts, setReceipts] = useState([]);
   useEffect(() => {
-    const u = [subscribeWallets(setWallets), subscribeTx(setTxs), subscribeProjects(setProjects), subscribeReceipts(setReceipts)];
+    const u = [subscribeWallets(setWallets), subscribePlanned(setPlanned), subscribeProjects(setProjects), subscribeReceipts(setReceipts)];
     return () => u.forEach((f) => f());
   }, []);
 
   const [tab, setTabState] = useState(() => loadPref('budgetTab', 'overview'));
   const setTab = (t) => { setTabState(t); savePref('budgetTab', t); };
   const [month, setMonth] = useState(() => { const d = new Date(); d.setDate(1); d.setHours(12); return d; });
+  // Операции читаем только за открытый месяц: остатки кошельков и итоги
+  // проектов хранятся счётчиками и не требуют всей истории.
+  const monthKey = `${month.getFullYear()}-${month.getMonth()}`;
+  useEffect(() => {
+    const from = new Date(month.getFullYear(), month.getMonth(), 1);
+    const to = new Date(month.getFullYear(), month.getMonth() + 1, 1);
+    return subscribeTxRange(from, to, setMonthTx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthKey]);
+  const txs = useMemo(() => {
+    const m = new Map();
+    [...monthTx, ...planned].forEach((t) => m.set(t.id, t));
+    return [...m.values()].sort((a, b) => (toDate(b.date) || 0) - (toDate(a.date) || 0));
+  }, [monthTx, planned]);
   const [txSheet, setTxSheet] = useState(null); // { tx?, initial? }
   const [walletSheet, setWalletSheet] = useState(null);
   const [showReceipts, setShowReceipts] = useState(false);
   const [projectOpen, setProjectOpen] = useState(null);
 
   const activeWallets = wallets.filter((w) => !w.archived);
-  const balances = useMemo(() => walletBalances(wallets, txs), [wallets, txs]);
+  const balances = useMemo(() => walletBalances(wallets), [wallets]);
+  const known = useMemo(() => ({ wallets: new Set(wallets.map((w) => w.id)), projects: new Set(projects.map((p) => p.id)) }), [wallets, projects]);
   const newReceipts = receipts.filter((r) => r.status !== 'parsed');
 
   const ctx = {
-    me, userOf, wallets, activeWallets, txs, projects, receipts, balances, month, setMonth,
+    me, userOf, wallets, activeWallets, txs, projects, receipts, balances, month, setMonth, known,
     openTx: (tx, initial) => setTxSheet({ tx, initial }),
     openWallet: setWalletSheet,
     openReceipts: () => setShowReceipts(true),
@@ -317,7 +334,7 @@ function Plan({ ctx }) {
   const row = (t) => (
     <div key={t.id} className="plan-row">
       <TxRow tx={t} ctx={ctx} showDate />
-      <button className="btn btn-sm btn-accent" onClick={() => commitPlanned(t)} title="Провести сегодняшним числом">
+      <button className="btn btn-sm btn-accent" onClick={() => commitPlanned(t, ctx.known)} title="Провести сегодняшним числом">
         <i className="fa-solid fa-check" /> Провести
       </button>
     </div>
@@ -341,9 +358,6 @@ function Plan({ ctx }) {
 }
 
 /* ---------- Проекты ---------- */
-function projectTotals(txs, id) {
-  return totals(txs.filter((t) => t.projectId === id));
-}
 
 function Projects({ ctx }) {
   const [archived, setArchived] = useState(false);
@@ -356,7 +370,7 @@ function Projects({ ctx }) {
       </div>
       {list.length === 0 && <p className="empty">{archived ? 'Архив пуст.' : 'Заведи проект — ремонт, отпуск, подарок — и считай, сколько пришло и куда ушло.'}</p>}
       {list.map((p) => {
-        const t = projectTotals(ctx.txs, p.id);
+        const t = { income: p.income || 0, expense: p.expense || 0 };
         const bal = t.income - t.expense;
         const pct = p.target ? Math.min(100, (t.expense / p.target) * 100) : null;
         return (
@@ -378,6 +392,9 @@ function Projects({ ctx }) {
 
 function ProjectSheet({ ctx, project, onClose }) {
   const [edit, setEdit] = useState(!project);
+  // операции проекта читаем только пока он открыт
+  const [projectTx, setProjectTx] = useState(null);
+  useEffect(() => (project?.id ? subscribeProjectTx(project.id, setProjectTx) : undefined), [project?.id]);
   const [name, setName] = useState(project?.name || '');
   const [note, setNote] = useState(project?.note || '');
   const [target, setTarget] = useState(project?.target ? String(project.target) : '');
@@ -405,8 +422,7 @@ function ProjectSheet({ ctx, project, onClose }) {
           <div className="row">
             <button className="btn" onClick={() => { saveProject(project.id, { archived: !project.archived }); onClose(); }}>{project.archived ? 'Вернуть из архива' : 'В архив'}</button>
             <button className="btn btn-ghost" style={{ color: 'var(--bad)' }} onClick={() => {
-              const n = ctx.txs.filter((t) => t.projectId === project.id).length;
-              if (confirm(n ? `Удалить проект? ${n} операций останутся, но без проекта.` : 'Удалить проект?')) { deleteProject(project.id); onClose(); }
+              if (confirm('Удалить проект? Его операции останутся в бюджете.')) { deleteProject(project.id); onClose(); }
             }}>Удалить</button>
           </div>
         )}
@@ -414,7 +430,7 @@ function ProjectSheet({ ctx, project, onClose }) {
     );
   }
 
-  const list = ctx.txs.filter((t) => t.projectId === project.id);
+  const list = projectTx || [];
   const t = totals(list);
   const cats = byCategory(list);
   const planned = list.filter((x) => x.planned).reduce((s, x) => s + (x.type === 'expense' ? x.amount : 0), 0);
@@ -458,13 +474,14 @@ function WalletSheet({ ctx, wallet, onClose }) {
   const [color, setColor] = useState(wallet?.color || '#6aa0d8');
   const current = wallet ? ctx.balances[wallet.id] || 0 : 0;
   const [bal, setBal] = useState(String(current));
-  const ops = wallet ? ctx.txs.filter((t) => !t.planned && (t.walletId === wallet.id || t.toWalletId === wallet.id)).slice(0, 15) : [];
+  const ops = wallet ? ctx.txs.filter((t) => !t.planned && inMonth(t, ctx.month) && (t.walletId === wallet.id || t.toWalletId === wallet.id)) : [];
 
   const save = () => {
     const desired = parseMoney(bal);
     const data = { name: name.trim() || 'Кошелёк', icon, color };
-    // «Остаток» правим через начальный баланс: initial = желаемое − движение
-    if (Number.isFinite(desired)) data.initial = Math.round(((wallet?.initial || 0) + desired - current) * 100) / 100;
+    // Остаток — счётчик в самом кошельке, поэтому правится напрямую
+    if (Number.isFinite(desired) && desired !== current) data.balance = desired;
+    else if (!wallet) data.balance = Number.isFinite(desired) ? desired : 0;
     if (!wallet) data.order = ctx.wallets.length;
     saveWallet(wallet?.id, data).catch((e) => alert(e.message));
     onClose();
@@ -490,7 +507,7 @@ function WalletSheet({ ctx, wallet, onClose }) {
       </div>
       {wallet && (
         <>
-          <div className="section-title">Последние операции</div>
+          <div className="section-title">Операции · {monthTitle(ctx.month)}</div>
           {ops.length ? <div className="tx-list">{ops.map((t) => <TxRow key={t.id} tx={t} ctx={ctx} showDate />)}</div> : <p className="hint">Пока нет.</p>}
           <button className="btn btn-ghost btn-block" style={{ marginTop: 14, color: 'var(--text-dim)' }}
             onClick={() => { if (confirm('Спрятать кошелёк? Операции сохранятся.')) { saveWallet(wallet.id, { archived: true }); onClose(); } }}>
@@ -530,7 +547,16 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
 
   const sum = parseMoney(amount);
   const itemsSum = items.reduce((s, x) => s + (parseMoney(x.amountStr) || 0), 0);
-  const receipt = ctx.receipts.find((r) => r.id === receiptId);
+  // разобранный чек не входит в живой список «новых» — дочитываем по id
+  const [loadedReceipt, setLoadedReceipt] = useState(null);
+  const liveReceipt = ctx.receipts.find((r) => r.id === receiptId);
+  useEffect(() => {
+    if (!receiptId || liveReceipt) return;
+    let alive = true;
+    fetchReceipt(receiptId).then((r) => alive && setLoadedReceipt(r)).catch(() => {});
+    return () => { alive = false; };
+  }, [receiptId, liveReceipt]);
+  const receipt = liveReceipt || (loadedReceipt?.id === receiptId ? loadedReceipt : null);
   const canSave = Number.isFinite(sum) && sum > 0 && (type !== 'transfer' || (walletId && toWalletId && walletId !== toWalletId));
 
   const save = () => {
@@ -538,11 +564,11 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
     const [y, m, d] = date.split('-').map(Number);
     const orig = tx && toDate(tx.date);
     const when = orig && dayKey(orig) === date ? orig : new Date(y, m - 1, d, 12, 0, 0);
-    saveTx(tx?.id, {
+    saveTx(tx || null, {
       type, amount: sum, walletId, toWalletId, category: category || cats[cats.length - 1].id, note: note.trim(),
-      date: when, planned, projectId, receiptId, prevReceiptId: tx?.receiptId,
+      date: when, planned, projectId, receiptId,
       items: type === 'expense' ? items.map((x) => ({ id: x.id, title: x.title.trim(), amount: parseMoney(x.amountStr) || 0, category: x.category || category })) : [],
-    }, ctx.me.uid).catch((e) => alert('Не сохранилось: ' + e.message));
+    }, ctx.me.uid, ctx.known).catch((e) => alert('Не сохранилось: ' + e.message));
     onClose();
   };
 
@@ -689,8 +715,8 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
 
       {tx && (
         <div className="row" style={{ marginTop: 6 }}>
-          {tx.planned && <button className="btn" onClick={() => { commitPlanned(tx); onClose(); }}><i className="fa-solid fa-check" /> Провести сегодня</button>}
-          <button className="btn btn-ghost" style={{ color: 'var(--bad)' }} onClick={() => { if (confirm('Удалить операцию?')) { deleteTx(tx); onClose(); } }}>Удалить</button>
+          {tx.planned && <button className="btn" onClick={() => { commitPlanned(tx, ctx.known); onClose(); }}><i className="fa-solid fa-check" /> Провести сегодня</button>}
+          <button className="btn btn-ghost" style={{ color: 'var(--bad)' }} onClick={() => { if (confirm('Удалить операцию?')) { deleteTx(tx, ctx.known); onClose(); } }}>Удалить</button>
         </div>
       )}
       {tx && <p className="hint">Добавил(а): {ctx.userOf(tx.authorUid)?.name}</p>}
@@ -713,7 +739,10 @@ function ReceiptViewer({ src, onClose }) {
 function ReceiptsSheet({ ctx, onClose }) {
   const [all, setAll] = useState(false);
   const [viewer, setViewer] = useState(null);
-  const list = ctx.receipts.filter((r) => all || r.status !== 'parsed');
+  // разобранные чеки — архив, читаем только по кнопке «Все»
+  const [allList, setAllList] = useState(null);
+  useEffect(() => (all ? subscribeAllReceipts(setAllList) : undefined), [all]);
+  const list = all ? (allList || []) : ctx.receipts;
   const open = async (id) => {
     setViewer('loading');
     try { setViewer(await loadReceiptImage(id)); } catch (e) { alert(e.message); setViewer(null); }
@@ -740,7 +769,10 @@ function ReceiptsSheet({ ctx, onClose }) {
               </div>
               <div className="row" style={{ marginTop: 6 }}>
                 {r.status === 'parsed'
-                  ? <button className="btn btn-sm" onClick={() => { const tx = ctx.txs.find((t) => t.id === r.txId); if (tx) { ctx.openTx(tx); onClose(); } }}>Операция</button>
+                  ? <button className="btn btn-sm" onClick={async () => {
+                    const tx = ctx.txs.find((t) => t.id === r.txId) || await fetchTx(r.txId).catch(() => null);
+                    if (tx) { ctx.openTx(tx); onClose(); }
+                  }}>Операция</button>
                   : <button className="btn btn-sm btn-accent" onClick={() => { ctx.openTx(null, receiptInitial(r)); onClose(); }}>Разобрать</button>}
                 <button className="btn btn-sm btn-ghost" style={{ flex: 'none', color: 'var(--bad)' }}
                   onClick={() => { if (confirm('Удалить фото чека?')) deleteReceipt(r); }}>Удалить</button>

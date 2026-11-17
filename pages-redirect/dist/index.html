@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Совушка & Гусик переехали</title>
+<meta http-equiv="refresh" content="0; url=https://lovetasktracker.argentummortis.workers.dev/">
+<link rel="canonical" href="https://lovetasktracker.argentummortis.workers.dev/">
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #2c2420; color: #ece3d6; font-family: Georgia, serif; text-align: center; padding: 24px; }
+  a { color: #d99873; font-size: 18px; }
+</style>
+<script>
+  // старый service worker мог закэшировать прежнюю версию — снимаем его
+  if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister()));
+  location.replace('https://lovetasktracker.argentummortis.workers.dev/' + location.search);
+</script>
+</head>
+<body>
+  <div>
+    <p>Приложение переехало.</p>
+    <p><a href="https://lovetasktracker.argentummortis.workers.dev/">Открыть новый адрес</a></p>
+    <p style="opacity:.7;font-size:14px">Удали старую иконку с экрана «Домой» и добавь новую.</p>
+  </div>
+</body>
+</html>

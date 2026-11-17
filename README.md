@@ -36,32 +36,41 @@ npm run dev
 3. **Firestore → Rules** — вставить содержимое файла `firestore.rules` из этого
    проекта и опубликовать. Эти правила пускают к данным только две почты выше.
 4. **Authentication → Settings → Authorized domains** — добавить домен, на
-   котором будет жить приложение (например `<логин>.github.io`), иначе вход не
+   котором живёт приложение (`lovetasktracker.argentummortis.workers.dev`), иначе вход не
    сработает на проде.
 
 ---
 
-## 3. Деплой на GitHub Pages
+## 3. Деплой на Cloudflare Workers
 
-Вариант А — пакетом `gh-pages` (быстро):
+Приложение живёт на **https://lovetasktracker.argentummortis.workers.dev**
+(статика из `dist/` + маленький воркер `worker/index.js`). Настройки — в `wrangler.jsonc`.
 
 ```bash
-# один раз: создать репозиторий и запушить код
-git init && git add . && git commit -m "init"
-git remote add origin https://github.com/<логин>/<репозиторий>.git
-git push -u origin main
-
-# деплой (соберёт dist и зальёт в ветку gh-pages)
-npm run deploy
+npm run deploy   # vite build + wrangler deploy
 ```
 
-Затем в настройках репозитория: **Settings → Pages → Source = ветка `gh-pages`**.
-Приложение будет по адресу `https://<логин>.github.io/<репозиторий>/`.
+Автодеплой при пуше в `main`: дашборд Cloudflare → Workers & Pages →
+`lovetasktracker` → Settings → Builds → Connect (репозиторий GitHub),
+build command `npm run build`, deploy command `npx wrangler deploy`.
 
-> `base: './'` в `vite.config.js` уже настроен так, чтобы работало из подпапки
-> репозитория — отдельно его править не нужно.
+`dist/` больше не хранится в git — собирается при деплое.
 
-Не забудь добавить итоговый домен в Authorized domains (см. п.2.4).
+**Почему воркер.** Вход через Google открывает страницу `/__/auth/handler`.
+Воркер проксирует `/__/*` на `tasktrackergando.firebaseapp.com`, поэтому страница
+входа оказывается на том же домене, что и приложение, и вход не ломается в Safari
+и в PWA на iPhone. Воркер вызывается только для `/__/*`; остальные запросы — статика,
+она бесплатна и не входит в лимит 100 000 запросов к воркерам в сутки.
+
+Для нового домена один раз нужно:
+1. Firebase → Authentication → Settings → **Authorized domains** → добавить
+   `lovetasktracker.argentummortis.workers.dev`.
+2. Google Cloud Console → APIs & Services → Credentials → OAuth-клиент
+   «Web client (auto created by Google Service)» → **Authorized redirect URIs** →
+   добавить `https://lovetasktracker.argentummortis.workers.dev/__/auth/handler`.
+
+Старый адрес на GitHub Pages отдаёт только редирект на новый (папка `pages-redirect/`,
+workflow `pages-redirect.yml`) и снимает старый service worker.
 
 ---
 
@@ -107,6 +116,15 @@ firestore.rules        правила доступа (вставить в Fireba
 ---
 
 ## Важно после обновления
+
+**Чтения Firestore.** Бесплатный тариф — 50 000 чтений в сутки, а подписка при
+холодном старте читает все свои документы. Поэтому живьём грузится только свежее:
+активные задачи + закрытые с начала недели, «хотим» + просмотренное за 45 дней,
+настроение за сегодня (календарь — только видимые 6 недель), события — только
+видимый месяц, в бюджете — операции открытого месяца и запланированные.
+Архивы (фильтр «Закрытые», «Посмотрели», «Все чеки», операции проекта) читаются
+только когда их открывают. Остатки кошельков и итоги проектов — счётчики
+(`balance`, `income`/`expense`), которые меняются тем же батчем, что и операция.
 
 Новые разделы хранятся в новых коллекциях Firestore (`moods`, `moodLegends`,
 `murmur`, `wallets`, `budgetTx`, `budgetProjects`, `receipts`, `receiptImages`).

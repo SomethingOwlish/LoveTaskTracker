@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Sheet, Seg } from './Sheet';
 import { DOW, monthTitle, isSameDay, dayKey, fromDayKey, fmtDate, fmtWeekday, uid6 } from '../lib/util';
-import { saveMoodLegend, setMood, clearMood, setMoodNote } from '../lib/db';
+import { saveMoodLegend, setMood, clearMood, setMoodNote, subscribeMoods } from '../lib/db';
 
 // Легенда по умолчанию — пока человек не настроил свою.
 export const DEFAULT_MOOD_LEGEND = [
@@ -79,12 +79,11 @@ export function MoodTodayWidget({ me, partner, moods, legends }) {
 }
 
 /* ---------- Календарь настроений ---------- */
-export function MoodCalendar({ me, partner, moods, legends }) {
+export function MoodCalendar({ me, partner, legends }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); d.setDate(1); return d; });
   const [whose, setWhose] = useState('both');
   const [openDay, setOpenDay] = useState(null);
   const [editLegend, setEditLegend] = useState(false);
-  const idx = useMemo(() => moodIndex(moods), [moods]);
 
   const grid = useMemo(() => {
     const startDow = (cursor.getDay() + 6) % 7;
@@ -92,6 +91,13 @@ export function MoodCalendar({ me, partner, moods, legends }) {
     start.setDate(1 - startDow);
     return Array.from({ length: 42 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
   }, [cursor]);
+
+  // читаем отметки только видимых 6 недель
+  const [moods, setMoods] = useState([]);
+  const fromKey = dayKey(grid[0]);
+  const toKey = dayKey(grid[41]);
+  useEffect(() => subscribeMoods(fromKey, toKey, setMoods), [fromKey, toKey]);
+  const idx = useMemo(() => moodIndex(moods), [moods]);
 
   const move = (delta) => { const n = new Date(cursor); n.setMonth(n.getMonth() + delta); setCursor(n); };
   const now = new Date();

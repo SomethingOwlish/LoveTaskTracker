@@ -1,11 +1,11 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { TaskCard } from './TaskCard';
 import { MatrixView } from './MatrixView';
 import { Avatar } from './Avatar';
 import { Seg, loadPref, savePref } from './Sheet';
 import { MoodTodayWidget } from './Mood';
 import { isActive, isClosed, projectsOf, toDate, startOfToday, endOfToday, fmtDate, fmtWeekday } from '../lib/util';
-import { createTask } from '../lib/db';
+import { createTask, subscribeClosedTasks } from '../lib/db';
 
 export function TasksView({ tasks, me, users, userOf, onOpen, projectColors, moods, moodLegends, initialMode }) {
   const [mode, setModeState] = useState(() => (['today', 'list', 'matrix'].includes(initialMode) ? initialMode : loadPref('tasksMode', 'today')));
@@ -171,8 +171,16 @@ function AllList({ tasks, me, userOf, onOpen, projectColors }) {
   const projects = useMemo(() => projectsOf(tasks, me.uid), [tasks, me.uid]);
   const [project, setProject] = useState(null);
 
+  // Архив закрытых грузим только когда открыли фильтр «Закрытые»:
+  // в живом списке есть лишь закрытые с начала недели.
+  const [closed, setClosed] = useState(null);
+  useEffect(() => {
+    if (filter !== 'done') return;
+    return subscribeClosedTasks(setClosed);
+  }, [filter]);
+
   const list = useMemo(() => {
-    let r = tasks;
+    let r = filter === 'done' && closed ? closed : tasks;
     if (filter === 'active') r = r.filter(isActive);
     else if (filter === 'mine') r = r.filter((t) => t.assigneeUid === me.uid && isActive(t));
     else if (filter === 'partner') r = r.filter((t) => t.assigneeUid !== me.uid && isActive(t));
@@ -181,7 +189,7 @@ function AllList({ tasks, me, userOf, onOpen, projectColors }) {
     else if (filter === 'done') r = r.filter(isClosed);
     if (project) r = r.filter((t) => (t.projectTags || []).includes(project));
     return r;
-  }, [tasks, filter, project, me.uid]);
+  }, [tasks, closed, filter, project, me.uid]);
 
   const reviewCount = tasks.filter((t) => t.status === 'in_review' && t.authorUid === me.uid).length;
 
@@ -211,11 +219,14 @@ function AllList({ tasks, me, userOf, onOpen, projectColors }) {
         </div>
       )}
 
-      {list.length === 0 ? (
+      {filter === 'done' && !closed ? (
+        <div className="empty"><i className="fa-solid fa-spinner fa-spin" /> Загружаю архив…</div>
+      ) : list.length === 0 ? (
         <div className="empty">Здесь пусто.</div>
       ) : (
         list.map((t) => <TaskCard key={t.id} task={t} me={me} userOf={userOf} onOpen={onOpen} projectColors={projectColors} />)
       )}
+      {filter === 'done' && closed && closed.length >= 100 && <p className="hint" style={{ textAlign: 'center' }}>Показаны последние 100 закрытых.</p>}
     </div>
   );
 }

@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Sheet, Seg, loadPref, savePref } from './Sheet';
 import { tsMs, fmtDate, toDate } from '../lib/util';
 import {
-  addMurmur, updateMurmur, deleteMurmur, toggleMurmurWant, rateMurmur, unwatchMurmur,
+  addMurmur, updateMurmur, subscribeMurmurDone, deleteMurmur, toggleMurmurWant, rateMurmur, unwatchMurmur,
 } from '../lib/db';
 
 export const MURMUR_KINDS = {
@@ -17,7 +17,7 @@ export function murmurAwaitingMe(items, uid) {
   return items.filter((x) => x.status === 'done' && x.ratings?.[uid] == null).length;
 }
 
-export function MurmurView({ items, me, users, userOf }) {
+export function MurmurView({ items: liveItems, me, users, userOf }) {
   const [kind, setKindState] = useState(() => loadPref('murmurKind', 'movie'));
   const setKind = (k) => { setKindState(k); savePref('murmurKind', k); };
   const [filter, setFilter] = useState('want');
@@ -27,6 +27,21 @@ export function MurmurView({ items, me, users, userOf }) {
   const [pick, setPick] = useState(null);
   const partner = users.find((u) => u.uid !== me.uid);
   const K = MURMUR_KINDS[kind];
+
+  // Живой список — «хотим» + недавно просмотренное. Весь архив просмотренного
+  // читаем только когда открыли «Посмотрели» или «Весь список».
+  const [archive, setArchive] = useState(null);
+  const needArchive = filter === 'done' || filter === 'all';
+  useEffect(() => {
+    if (!needArchive) return;
+    return subscribeMurmurDone(setArchive);
+  }, [needArchive]);
+  const items = useMemo(() => {
+    if (!needArchive || !archive) return liveItems;
+    const m = new Map(liveItems.map((x) => [x.id, x]));
+    archive.forEach((x) => m.set(x.id, x));
+    return [...m.values()];
+  }, [liveItems, archive, needArchive]);
 
   const ofKind = useMemo(() => items.filter((x) => x.kind === kind), [items, kind]);
   const counts = useMemo(() => {
