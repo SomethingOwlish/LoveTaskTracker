@@ -1,7 +1,7 @@
 import { db } from '../firebase';
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, writeBatch, deleteField,
-  onSnapshot, query, orderBy, where, serverTimestamp, Timestamp, arrayUnion, arrayRemove,
+  onSnapshot, query, orderBy, where, limit, serverTimestamp, Timestamp, arrayUnion, arrayRemove,
 } from 'firebase/firestore';
 import { nextFutureRecurrence } from './recurrence';
 import { tsMs } from './util';
@@ -10,19 +10,62 @@ const tasksCol = collection(db, 'tasks');
 const eventsCol = collection(db, 'events');
 const notifsCol = collection(db, 'notifications');
 
-/* ---------------- Подписки (realtime) ---------------- */
-export function subscribeTasks(cb) {
-  // Без серверного orderBy: у новой задачи createdAt секунду = null и при
-  // orderBy она уходит вниз/не видна до ответа сервера. Сортируем на клиенте,
-  // считая новые (pending) самыми свежими — тогда они появляются сразу сверху.
-  return onSnapshot(tasksCol, (snap) => {
-    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    list.sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt));
+/* ---------------- Подписки (realtime) ----------------
+   Читаем только «живые» данные: бесплатный тариф Firestore — 50 000 чтений
+   в сутки, а каждая подписка при холодном старте читает все свои документы.
+   Архив (старые закрытые задачи, просмотренное в Мурмуре, прошлые месяцы)
+   грузится только когда его явно открывают. */
+
+// Несколько запросов → один отсортированный список без дублей.
+function mergeSubs(queries, cb, sort) {
+  const parts = queries.map(() => null);
+  const emit = () => {
+    if (parts.some((p) => p === null)) return; // ждём первый ответ от всех
+    const map = new Map();
+    parts.forEach((list) => list.forEach((x) => map.set(x.id, x)));
+    const list = [...map.values()];
+    if (sort) list.sort(sort);
     cb(list);
-  });
+  };
+  const unsubs = queries.map((q, i) => onSnapshot(q, (snap) => {
+    parts[i] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    emit();
+  }, (e) => console.warn('subscription', e)));
+  return () => unsubs.forEach((u) => u());
 }
-export function subscribeEvents(cb) {
-  const q = query(eventsCol, orderBy('date', 'asc'));
+
+const newestFirst = (a, b) => tsMs(b.createdAt) - tsMs(a.createdAt);
+
+// Начало текущей недели (Пн) — закрытые с этого момента нужны для «Сделано
+// сегодня» и недельной статистики. Всё, что закрыто раньше, — архив.
+function weekStartTs() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return Timestamp.fromDate(d);
+}
+
+export function subscribeTasks(cb) {
+  return mergeSubs([
+    query(tasksCol, where('status', 'in', ['open', 'in_progress', 'returned', 'in_review'])),
+    query(tasksCol, where('completedAt', '>=', weekStartTs())),
+  ], cb, newestFirst);
+}
+
+// Архив закрытых — только по явному запросу (фильтр «Закрытые»).
+export function subscribeClosedTasks(cb, max = 100) {
+  const q = query(tasksCol, orderBy('completedAt', 'desc'), limit(max));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+}
+
+export async function fetchTask(id) {
+  const s = await getDoc(doc(db, 'tasks', id));
+  return s.exists() ? { id: s.id, ...s.data() } : null;
+}
+
+// События календаря — только видимый диапазон дат.
+export function subscribeEvents(from, to, cb) {
+  const q = query(eventsCol, where('date', '>=', Timestamp.fromDate(from)), where('date', '<', Timestamp.fromDate(to)), orderBy('date', 'asc'));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
 export function subscribeComments(taskId, cb) {
@@ -110,7 +153,10 @@ export async function returnTask(task) {
 async function closeWithRecurrence(task, status) {
   const batch = writeBatch(db);
   const ref = doc(db, 'tasks', task.id);
-  const patch = { status, completedAt: serverTimestamp(), updatedAt: serverTimestamp() };
+  // completedAt — время телефона, а не serverTimestamp: пока сервер не ответил,
+  // serverTimestamp локально равен null и задача выпала бы из запроса «закрытые
+  // за неделю» (а без сети — пропала бы до синхронизации).
+  const patch = { status, completedAt: Timestamp.now(), updatedAt: serverTimestamp() };
   const repeats = task.recurrence && task.recurrence !== 'none';
   if (repeats && !task.nextTaskId) {
     const nextRef = doc(tasksCol);
@@ -189,6 +235,13 @@ async function addNotification(n) {
   return addDoc(notifsCol, { ...n, createdAt: serverTimestamp() });
 }
 
+// Уведомления старше месяца удаляем при открытии списка, чтобы коллекция не росла бесконечно.
+export async function pruneNotifications(list, days = 30) {
+  const edge = Date.now() - days * 86400000;
+  const old = (list || []).filter((n) => n.createdAt && tsMs(n.createdAt) < edge);
+  await Promise.all(old.map((n) => deleteDoc(doc(db, 'notifications', n.id))));
+}
+
 export async function clearNotifications(list) {
   await Promise.all((list || []).map((n) => deleteDoc(doc(db, 'notifications', n.id))));
 }
@@ -211,8 +264,10 @@ export async function deleteEvent(id) {
 /* ---------------- Настроение ---------------- */
 // moodLegends/{uid} = { items: [{id, color, label}] } — у каждого своя легенда.
 // moods/{uid}_{YYYY-MM-DD} = { uid, day, itemId, color, label, note }
-export function subscribeMoods(cb) {
-  return onSnapshot(collection(db, 'moods'), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+// Отметки за диапазон дней (ключи YYYY-MM-DD сравниваются как строки).
+export function subscribeMoods(fromKey, toKey, cb) {
+  const q = query(collection(db, 'moods'), where('day', '>=', fromKey), where('day', '<=', toKey));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
 export function subscribeMoodLegends(cb) {
   return onSnapshot(collection(db, 'moodLegends'), (snap) => {
@@ -239,12 +294,17 @@ export async function clearMood(uid, day) {
 
 /* ---------------- Мурмур (фильмы / сериалы / игры) ---------------- */
 const murmurCol = collection(db, 'murmur');
+// Живой список: что хотим + просмотренное за последние 45 дней (для бейджа
+// «ждёт твоей оценки»). Весь архив просмотренного — subscribeMurmurDone.
 export function subscribeMurmur(cb) {
-  return onSnapshot(murmurCol, (snap) => {
-    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    list.sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt));
-    cb(list);
-  });
+  const since = Timestamp.fromMillis(Date.now() - 45 * 86400000);
+  return mergeSubs([
+    query(murmurCol, where('status', '==', 'want')),
+    query(murmurCol, where('doneAt', '>=', since)),
+  ], cb, newestFirst);
+}
+export function subscribeMurmurDone(cb) {
+  return onSnapshot(query(murmurCol, where('status', '==', 'done')), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
 export async function addMurmur({ kind, title, note = '', link = '', uid }) {
   const t = title.trim();
@@ -271,7 +331,7 @@ export async function rateMurmur(item, uid, rating, review) {
   const patch = { [`ratings.${uid}`]: rating, [`reviews.${uid}`]: review || '' };
   if (item.status !== 'done') {
     patch.status = 'done';
-    patch.doneAt = serverTimestamp();
+    patch.doneAt = Timestamp.now(); // см. closeWithRecurrence — нужен сразу для запроса «недавно просмотренные»
     patch.doneBy = uid;
   }
   return updateDoc(doc(db, 'murmur', item.id), patch);

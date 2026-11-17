@@ -3,9 +3,10 @@ import { onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from
 import { auth, provider } from './firebase';
 import { ALLOWED_EMAILS, USERS, userByEmail } from './config';
 import {
-  subscribeTasks, subscribeEvents, subscribeNotifications, clearNotifications,
+  subscribeTasks, subscribeNotifications, clearNotifications, pruneNotifications, fetchTask,
   subscribeMoods, subscribeMoodLegends, subscribeMurmur,
 } from './lib/db';
+import { dayKey } from './lib/util';
 import { projectsOf, allTags, tsMs } from './lib/util';
 import { Avatar } from './components/Avatar';
 import { TasksView } from './components/TasksView';
@@ -37,7 +38,6 @@ export default function App() {
   const [tab, setTabState] = useState(() => (TABS.some(([k]) => k === START_TAB) ? START_TAB : loadPref('tab', 'tasks')));
   const setTab = (t) => { setTabState(t); savePref('tab', t); window.scrollTo(0, 0); };
   const [tasks, setTasks] = useState([]);
-  const [events, setEvents] = useState([]);
   const [moods, setMoods] = useState([]);
   const [moodLegends, setMoodLegends] = useState({});
   const [murmur, setMurmur] = useState([]);
@@ -78,13 +78,25 @@ export default function App() {
     if (!user) return;
     const unsub = [
       subscribeTasks(setTasks),
-      subscribeEvents(setEvents),
-      subscribeMoods(setMoods),
       subscribeMoodLegends(setMoodLegends),
       subscribeMurmur(setMurmur),
     ];
     return () => unsub.forEach((u) => u());
   }, [user]);
+
+  // Для виджета «Настроение сегодня» нужна только сегодняшняя дата.
+  // Ключ дня обновляется, когда приложение возвращают на экран после полуночи.
+  const [today, setToday] = useState(dayKey());
+  useEffect(() => {
+    const upd = () => setToday(dayKey());
+    document.addEventListener('visibilitychange', upd);
+    window.addEventListener('focus', upd);
+    return () => { document.removeEventListener('visibilitychange', upd); window.removeEventListener('focus', upd); };
+  }, []);
+  useEffect(() => {
+    if (!user) return;
+    return subscribeMoods(today, today, setMoods);
+  }, [user, today]);
 
   const me = useMemo(() => {
     if (!user?.email) return null;
@@ -124,13 +136,15 @@ export default function App() {
     setViewedFrom(readAt);
     setShowInbox(true);
     const now = Date.now();
+    pruneNotifications(notifs).catch(() => {});
     setReadAt(now);
     if (me) localStorage.setItem('notifReadAt:' + me.email, String(now));
   };
 
-  const openFromNotif = (taskId) => {
-    const t = tasks.find((x) => x.id === taskId);
+  const openFromNotif = async (taskId) => {
     setShowInbox(false);
+    // старые закрытые задачи не загружены в живой список — дочитываем по id
+    const t = tasks.find((x) => x.id === taskId) || await fetchTask(taskId).catch(() => null);
     if (t) setModal(t);
   };
 
@@ -211,7 +225,7 @@ export default function App() {
           <TasksView tasks={tasks} me={me} users={users} userOf={userOf} onOpen={setModal} projectColors={projectColors}
             moods={moods} moodLegends={moodLegends} initialMode={START_VIEW} />
         )}
-        {tab === 'calendar' && <CalendarView tasks={tasks} events={events} me={me} users={users} moods={moods} moodLegends={moodLegends} onOpen={setModal} />}
+        {tab === 'calendar' && <CalendarView tasks={tasks} me={me} users={users} moods={moods} moodLegends={moodLegends} onOpen={setModal} />}
         {tab === 'murmur' && <MurmurView items={murmur} me={me} users={users} userOf={userOf} />}
         {tab === 'budget' && <BudgetView me={me} userOf={userOf} />}
         {tab === 'profile' && (

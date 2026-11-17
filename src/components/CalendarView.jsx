@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
-import { DOW, monthTitle, isSameDay, toDate, fmtDate } from '../lib/util';
-import { createEvent, deleteEvent } from '../lib/db';
+import { useEffect, useMemo, useState } from 'react';
+import { DOW, monthTitle, isSameDay, toDate, fmtDate, dayKey } from '../lib/util';
+import { createEvent, deleteEvent, subscribeEvents } from '../lib/db';
 import { Seg, loadPref, savePref } from './Sheet';
 import { MoodCalendar } from './Mood';
 
-export function CalendarView({ tasks, events, me, users, moods, moodLegends, onOpen }) {
+export function CalendarView({ tasks, me, users, moodLegends, onOpen }) {
   const [mode, setModeState] = useState(() => loadPref('calMode', 'plan'));
   const setMode = (m) => { setModeState(m); savePref('calMode', m); };
   const partner = users.find((u) => u.uid !== me.uid);
@@ -12,25 +12,17 @@ export function CalendarView({ tasks, events, me, users, moods, moodLegends, onO
     <div>
       <Seg value={mode} onChange={setMode} options={[['plan', 'План'], ['mood', 'Настроение']]} className="mb" />
       {mode === 'plan'
-        ? <PlanCalendar tasks={tasks} events={events} me={me} onOpen={onOpen} />
-        : <MoodCalendar me={me} partner={partner} moods={moods} legends={moodLegends} />}
+        ? <PlanCalendar tasks={tasks} me={me} onOpen={onOpen} />
+        : <MoodCalendar me={me} partner={partner} legends={moodLegends} />}
     </div>
   );
 }
 
-function PlanCalendar({ tasks, events, me, onOpen }) {
+function PlanCalendar({ tasks, me, onOpen }) {
   const [adding, setAdding] = useState(false);
   const [evTitle, setEvTitle] = useState('');
   const [cursor, setCursor] = useState(() => { const d = new Date(); d.setDate(1); return d; });
   const [selected, setSelected] = useState(new Date());
-
-  // Точки в дне: дедлайны задач + события.
-  const items = useMemo(() => {
-    const list = [];
-    tasks.forEach((t) => { const d = toDate(t.deadline); if (d) list.push({ date: d, kind: 'task', ref: t }); });
-    events.forEach((e) => { const d = toDate(e.date); if (d) list.push({ date: d, kind: 'event', ref: e }); });
-    return list;
-  }, [tasks, events]);
 
   const grid = useMemo(() => {
     const first = new Date(cursor);
@@ -45,6 +37,25 @@ function PlanCalendar({ tasks, events, me, onOpen }) {
     }
     return days;
   }, [cursor]);
+
+  // события — только для видимых 6 недель сетки
+  const [events, setEvents] = useState([]);
+  const rangeKey = dayKey(grid[0]);
+  useEffect(() => {
+    const from = new Date(grid[0]); from.setHours(0, 0, 0, 0);
+    const to = new Date(grid[41]); to.setHours(0, 0, 0, 0); to.setDate(to.getDate() + 1);
+    return subscribeEvents(from, to, setEvents);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeKey]);
+
+  // Точки в дне: дедлайны задач + события.
+  const items = useMemo(() => {
+    const list = [];
+    tasks.forEach((t) => { const d = toDate(t.deadline); if (d) list.push({ date: d, kind: 'task', ref: t }); });
+    events.forEach((e) => { const d = toDate(e.date); if (d) list.push({ date: d, kind: 'event', ref: e }); });
+    return list;
+  }, [tasks, events]);
+
 
   const dayItems = (d) => items.filter((it) => isSameDay(it.date, d));
   const selItems = dayItems(selected);
