@@ -2,23 +2,45 @@ import { useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
 import { auth, provider } from './firebase';
 import { ALLOWED_EMAILS, USERS, userByEmail } from './config';
-import { subscribeTasks, subscribeEvents, subscribeNotifications, clearNotifications } from './lib/db';
+import {
+  subscribeTasks, subscribeEvents, subscribeNotifications, clearNotifications,
+  subscribeMoods, subscribeMoodLegends, subscribeMurmur,
+} from './lib/db';
 import { projectsOf, allTags, tsMs } from './lib/util';
 import { Avatar } from './components/Avatar';
 import { TasksView } from './components/TasksView';
-import { MatrixView } from './components/MatrixView';
 import { CalendarView } from './components/CalendarView';
 import { ProfileView } from './components/ProfileView';
 import { TaskModal } from './components/TaskModal';
 import { Inbox, unreadCount } from './components/Inbox';
+import { MurmurView, murmurAwaitingMe } from './components/MurmurView';
+import { BudgetView } from './components/BudgetView';
+import { loadPref, savePref } from './components/Sheet';
+
+// Ярлык PWA / ссылка вида ?tab=tasks&view=today открывает нужный экран сразу.
+const params = new URLSearchParams(window.location.search);
+const START_TAB = params.get('tab');
+const START_VIEW = params.get('view');
+
+const TABS = [
+  ['tasks', 'fa-solid fa-list-check', 'Задачи'],
+  ['calendar', 'fa-regular fa-calendar', 'Календарь'],
+  ['murmur', 'fa-solid fa-film', 'Мурмур'],
+  ['budget', 'fa-solid fa-wallet', 'Бюджет'],
+  ['profile', 'fa-regular fa-user', 'Профиль'],
+];
 
 const DEFAULT_ACCENT = { academia: '#d99873', cyberpunk: '#00f2ff' };
 
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined = грузится, null = нет
-  const [tab, setTab] = useState('tasks');
+  const [tab, setTabState] = useState(() => (TABS.some(([k]) => k === START_TAB) ? START_TAB : loadPref('tab', 'tasks')));
+  const setTab = (t) => { setTabState(t); savePref('tab', t); window.scrollTo(0, 0); };
   const [tasks, setTasks] = useState([]);
   const [events, setEvents] = useState([]);
+  const [moods, setMoods] = useState([]);
+  const [moodLegends, setMoodLegends] = useState({});
+  const [murmur, setMurmur] = useState([]);
   const [modal, setModal] = useState(null); // null | {} (new) | task (edit)
   const [showInbox, setShowInbox] = useState(false);
 
@@ -54,9 +76,14 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
-    const u1 = subscribeTasks(setTasks);
-    const u2 = subscribeEvents(setEvents);
-    return () => { u1(); u2(); };
+    const unsub = [
+      subscribeTasks(setTasks),
+      subscribeEvents(setEvents),
+      subscribeMoods(setMoods),
+      subscribeMoodLegends(setMoodLegends),
+      subscribeMurmur(setMurmur),
+    ];
+    return () => unsub.forEach((u) => u());
   }, [user]);
 
   const me = useMemo(() => {
@@ -91,6 +118,7 @@ export default function App() {
   }, [me?.uid]);
 
   const unread = useMemo(() => unreadCount(notifs, readAt), [notifs, readAt]);
+  const murmurBadge = useMemo(() => (me ? murmurAwaitingMe(murmur, me.uid) : 0), [murmur, me?.uid]);
 
   const openInbox = () => {
     setViewedFrom(readAt);
@@ -178,34 +206,34 @@ export default function App() {
         </button>
       </div>
 
-      {tab === 'tasks' && <TasksView tasks={tasks} me={me} users={users} userOf={userOf} onOpen={setModal} projectColors={projectColors} />}
-      {tab === 'matrix' && <MatrixView tasks={tasks} me={me} users={users} onOpen={setModal} projectColors={projectColors} />}
-      {tab === 'calendar' && <CalendarView tasks={tasks} events={events} me={me} onOpen={setModal} />}
-      {tab === 'profile' && (
-        <ProfileView
-          tasks={tasks} me={me} users={users}
-          theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}
-          projectColors={projectColors} setProjectColor={setProjectColor}
-        />
-      )}
+      <main className="screen" key={tab}>
+        {tab === 'tasks' && (
+          <TasksView tasks={tasks} me={me} users={users} userOf={userOf} onOpen={setModal} projectColors={projectColors}
+            moods={moods} moodLegends={moodLegends} initialMode={START_VIEW} />
+        )}
+        {tab === 'calendar' && <CalendarView tasks={tasks} events={events} me={me} users={users} moods={moods} moodLegends={moodLegends} onOpen={setModal} />}
+        {tab === 'murmur' && <MurmurView items={murmur} me={me} users={users} userOf={userOf} />}
+        {tab === 'budget' && <BudgetView me={me} userOf={userOf} />}
+        {tab === 'profile' && (
+          <ProfileView
+            tasks={tasks} me={me} users={users}
+            theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}
+            projectColors={projectColors} setProjectColor={setProjectColor}
+          />
+        )}
+      </main>
 
-      {(tab === 'tasks' || tab === 'matrix') && (
-        <button className="fab" onClick={() => setModal({})} aria-label="Новая задача">+</button>
+      {tab === 'tasks' && (
+        <button className="fab" onClick={() => setModal({})} aria-label="Новая задача (подробно)"><i className="fa-solid fa-plus" /></button>
       )}
 
       <nav className="nav">
-        <button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}>
-          <span className="ico">☑</span>Задачи
-        </button>
-        <button className={tab === 'matrix' ? 'active' : ''} onClick={() => setTab('matrix')}>
-          <span className="ico">⊹</span>Матрица
-        </button>
-        <button className={tab === 'calendar' ? 'active' : ''} onClick={() => setTab('calendar')}>
-          <span className="ico">▦</span>Календарь
-        </button>
-        <button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>
-          <span className="ico">◑</span>Профиль
-        </button>
+        {TABS.map(([k, icon, label]) => (
+          <button key={k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)} aria-current={tab === k ? 'page' : undefined}>
+            <span className="ico"><i className={icon} />{k === 'murmur' && murmurBadge > 0 && <span className="nav-badge">{murmurBadge}</span>}</span>
+            {label}
+          </button>
+        ))}
       </nav>
 
       {showInbox && (

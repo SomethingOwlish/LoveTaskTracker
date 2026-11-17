@@ -8,6 +8,11 @@
   "orientation": "portrait",
   "background_color": "#2c2420",
   "theme_color": "#2c2420",
+  "shortcuts": [
+    { "name": "Задачи на сегодня", "short_name": "Сегодня", "url": "./?tab=tasks&view=today" },
+    { "name": "Бюджет", "short_name": "Бюджет", "url": "./?tab=budget" },
+    { "name": "Мурмур", "short_name": "Мурмур", "url": "./?tab=murmur" }
+  ],
   "icons": [
     { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }

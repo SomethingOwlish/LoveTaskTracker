@@ -1,9 +1,9 @@
 import { db } from '../firebase';
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc,
+  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, writeBatch, deleteField,
   onSnapshot, query, orderBy, where, serverTimestamp, Timestamp, arrayUnion, arrayRemove,
 } from 'firebase/firestore';
-import { nextRecurrence } from './recurrence';
+import { nextFutureRecurrence } from './recurrence';
 import { tsMs } from './util';
 
 const tasksCol = collection(db, 'tasks');
@@ -91,27 +91,12 @@ export async function completeTask(task) {
   if (task.needsReview && task.status !== 'in_review' && task.status !== 'approved') {
     return updateDoc(doc(db, 'tasks', task.id), { status: 'in_review', updatedAt: serverTimestamp() });
   }
-  // иначе закрываем
-  await updateDoc(doc(db, 'tasks', task.id), {
-    status: 'done',
-    completedAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-  await maybeSpawnRecurrence(task);
-}
-
-export async function reopenTask(task) {
-  return updateDoc(doc(db, 'tasks', task.id), {
-    status: 'open', completedAt: null, updatedAt: serverTimestamp(),
-  });
+  return closeWithRecurrence(task, 'done');
 }
 
 /* Ревью: автор принимает или возвращает. */
 export async function approveTask(task) {
-  await updateDoc(doc(db, 'tasks', task.id), {
-    status: 'approved', completedAt: serverTimestamp(), updatedAt: serverTimestamp(),
-  });
-  await maybeSpawnRecurrence(task);
+  return closeWithRecurrence(task, 'approved');
 }
 export async function returnTask(task) {
   return updateDoc(doc(db, 'tasks', task.id), {
@@ -119,11 +104,27 @@ export async function returnTask(task) {
   });
 }
 
-async function maybeSpawnRecurrence(task) {
-  if (!task.recurrence || task.recurrence === 'none') return;
-  const base = task.deadline?.toDate ? task.deadline.toDate() : new Date();
-  const next = nextRecurrence(base, task.recurrence);
-  await addDoc(tasksCol, {
+/* Закрыть задачу и (если она повторяющаяся) одним батчем поставить
+   следующую такую же. Ссылка на следующую хранится в nextTaskId — по ней
+   повторное закрытие не плодит дубли, а «вернуть в работу» убирает копию. */
+async function closeWithRecurrence(task, status) {
+  const batch = writeBatch(db);
+  const ref = doc(db, 'tasks', task.id);
+  const patch = { status, completedAt: serverTimestamp(), updatedAt: serverTimestamp() };
+  const repeats = task.recurrence && task.recurrence !== 'none';
+  if (repeats && !task.nextTaskId) {
+    const nextRef = doc(tasksCol);
+    batch.set(nextRef, recurrenceCopy(task));
+    patch.nextTaskId = nextRef.id;
+  }
+  batch.update(ref, patch);
+  return batch.commit();
+}
+
+function recurrenceCopy(task) {
+  const base = task.deadline?.toDate ? task.deadline.toDate() : (() => { const d = new Date(); d.setHours(23, 59, 0, 0); return d; })();
+  const next = nextFutureRecurrence(base, task.recurrence);
+  return {
     title: task.title,
     description: task.description || '',
     authorUid: task.authorUid,
@@ -139,11 +140,25 @@ async function maybeSpawnRecurrence(task) {
     link: task.link || null,
     checklist: (task.checklist || []).map((c) => ({ ...c, done: false })),
     recurrence: task.recurrence,
+    prevTaskId: task.id,
     likes: [],
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     completedAt: null,
-  });
+  };
+}
+
+export async function reopenTask(task) {
+  const patch = { status: 'open', completedAt: null, updatedAt: serverTimestamp() };
+  // откат: если при закрытии поставилась следующая копия и её ещё не трогали — убираем
+  if (task.nextTaskId) {
+    try {
+      const snap = await getDoc(doc(db, 'tasks', task.nextTaskId));
+      if (snap.exists() && snap.data().status === 'open') await deleteDoc(snap.ref);
+    } catch { /* нет сети — просто оставим копию */ }
+    patch.nextTaskId = deleteField();
+  }
+  return updateDoc(doc(db, 'tasks', task.id), patch);
 }
 
 /* ---------------- Комментарии ---------------- */
@@ -191,4 +206,76 @@ export async function createEvent(data) {
 }
 export async function deleteEvent(id) {
   return deleteDoc(doc(db, 'events', id));
+}
+
+/* ---------------- Настроение ---------------- */
+// moodLegends/{uid} = { items: [{id, color, label}] } — у каждого своя легенда.
+// moods/{uid}_{YYYY-MM-DD} = { uid, day, itemId, color, label, note }
+export function subscribeMoods(cb) {
+  return onSnapshot(collection(db, 'moods'), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+}
+export function subscribeMoodLegends(cb) {
+  return onSnapshot(collection(db, 'moodLegends'), (snap) => {
+    const map = {};
+    snap.docs.forEach((d) => { map[d.id] = d.data().items || []; });
+    cb(map);
+  });
+}
+export async function saveMoodLegend(uid, items) {
+  return setDoc(doc(db, 'moodLegends', uid), { items, updatedAt: serverTimestamp() });
+}
+export async function setMood(uid, day, item, note = '') {
+  return setDoc(doc(db, 'moods', `${uid}_${day}`), {
+    uid, day, itemId: item.id, color: item.color, label: item.label, note: note || '',
+    updatedAt: serverTimestamp(),
+  });
+}
+export async function setMoodNote(uid, day, note) {
+  return updateDoc(doc(db, 'moods', `${uid}_${day}`), { note, updatedAt: serverTimestamp() });
+}
+export async function clearMood(uid, day) {
+  return deleteDoc(doc(db, 'moods', `${uid}_${day}`));
+}
+
+/* ---------------- Мурмур (фильмы / сериалы / игры) ---------------- */
+const murmurCol = collection(db, 'murmur');
+export function subscribeMurmur(cb) {
+  return onSnapshot(murmurCol, (snap) => {
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    list.sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt));
+    cb(list);
+  });
+}
+export async function addMurmur({ kind, title, note = '', link = '', uid }) {
+  const t = title.trim();
+  if (!t) return;
+  return addDoc(murmurCol, {
+    kind, title: t, note, link: link || null,
+    addedBy: uid, wantedBy: [uid],
+    status: 'want', ratings: {}, reviews: {},
+    createdAt: serverTimestamp(), doneAt: null, doneBy: null,
+  });
+}
+export async function updateMurmur(id, patch) {
+  return updateDoc(doc(db, 'murmur', id), patch);
+}
+export async function deleteMurmur(id) {
+  return deleteDoc(doc(db, 'murmur', id));
+}
+export async function toggleMurmurWant(item, uid) {
+  const has = (item.wantedBy || []).includes(uid);
+  return updateDoc(doc(db, 'murmur', item.id), { wantedBy: has ? arrayRemove(uid) : arrayUnion(uid) });
+}
+// Отметить просмотренным (если ещё нет) и/или поставить свою оценку.
+export async function rateMurmur(item, uid, rating, review) {
+  const patch = { [`ratings.${uid}`]: rating, [`reviews.${uid}`]: review || '' };
+  if (item.status !== 'done') {
+    patch.status = 'done';
+    patch.doneAt = serverTimestamp();
+    patch.doneBy = uid;
+  }
+  return updateDoc(doc(db, 'murmur', item.id), patch);
+}
+export async function unwatchMurmur(item) {
+  return updateDoc(doc(db, 'murmur', item.id), { status: 'want', doneAt: null, doneBy: null, ratings: {}, reviews: {} });
 }

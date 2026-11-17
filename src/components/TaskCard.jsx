@@ -1,8 +1,9 @@
 import { Avatar } from './Avatar';
-import { toDate, fmtDate, quadrant, isClosed } from '../lib/util';
+import { toDate, fmtDate, quadrant, isClosed, startOfToday, isSameDay } from '../lib/util';
+import { RECURRENCE_LABEL } from '../lib/recurrence';
 import { completeTask, reopenTask, toggleLike } from '../lib/db';
 
-export function TaskCard({ task, me, userOf, onOpen, projectColors = {} }) {
+export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact = false }) {
   const author = userOf(task.authorUid);
   const assignee = userOf(task.assigneeUid);
   const closed = isClosed(task);
@@ -18,6 +19,10 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {} }) {
   const proj = (task.projectTags || [])[0];
   const stripe = (proj && projectColors[proj]) || 'var(--accent)';
 
+  const overdue = !closed && dl && dl < startOfToday();
+  const dlLabel = dl && (isSameDay(dl, new Date()) ? 'сегодня' : fmtDate(dl));
+  const repeats = task.recurrence && task.recurrence !== 'none';
+
   const onCheck = (e) => {
     e.stopPropagation();
     if (closed) return reopenTask(task);
@@ -26,7 +31,7 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {} }) {
   };
 
   return (
-    <div className={`task ${closed ? 'done' : ''}`} style={{ borderLeftColor: stripe }} onClick={() => onOpen(task)}>
+    <div className={`task ${closed ? 'done' : ''} ${compact ? 'compact' : ''}`} style={{ borderLeftColor: stripe }} onClick={() => onOpen(task)}>
       <div className="task-top">
         <button
           className={`check ${closed ? 'on' : ''}`}
@@ -40,7 +45,7 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {} }) {
         {task.needsReview && task.status !== 'in_review' && !closed && <span className="badge q">с проверкой</span>}
       </div>
 
-      {task.description && <p className="desc">{task.description}</p>}
+      {task.description && !compact && <p className="desc">{task.description}</p>}
 
       {(task.tags?.length || task.projectTags?.length) ? (
         <div className="chips" style={{ marginTop: 10 }}>
@@ -53,17 +58,18 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {} }) {
         <span className="who">
           <Avatar email={assignee?.email} avatar={assignee?.avatar} /> {assignee?.name || '—'}
         </span>
-        {dl && <span>⌛ {fmtDate(dl)}</span>}
-        <span>{q.label}</span>
+        {dl && <span className={overdue ? 'overdue' : ''}><i className="fa-regular fa-clock" /> {dlLabel}</span>}
+        {repeats && <span title={RECURRENCE_LABEL[task.recurrence]}><i className="fa-solid fa-rotate" /> {RECURRENCE_LABEL[task.recurrence].toLowerCase()}</span>}
+        {!compact && <span>{q.label}</span>}
         {checkTotal > 0 && (
           <span className="chip tag" style={allDone ? { color: 'var(--good)', borderColor: 'color-mix(in srgb, var(--good) 60%, transparent)' } : undefined}>
             ☑ {checkDone}/{checkTotal}
           </span>
         )}
-        {task.link && <span>🔗</span>}
+        {task.link && <span><i className="fa-solid fa-link" /></span>}
       </div>
 
-      <div className="task-foot">
+      {!compact && <div className="task-foot">
         <span className="who" style={{ fontSize: 11, color: 'var(--text-dim)' }}>
           от <Avatar email={author?.email} avatar={author?.avatar} /> {author?.name}
         </span>
@@ -79,7 +85,7 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {} }) {
         ) : (
           liked && <span className="like on" aria-label="Партнёру нравится">♥</span>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

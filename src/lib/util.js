@@ -82,3 +82,38 @@ export function allTags(tasks) {
   tasks.forEach((t) => (t.tags || []).forEach((x) => s.add(x)));
   return [...s].sort();
 }
+
+// Ключ дня в локальной зоне: 2026-11-17
+export function dayKey(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+export function fromDayKey(k) {
+  const [y, m, d] = k.split('-').map(Number);
+  return new Date(y, m - 1, d, 12, 0, 0, 0);
+}
+export function endOfToday() {
+  const x = new Date();
+  x.setHours(23, 59, 0, 0);
+  return x;
+}
+export function addDays(d, n) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+export function fmtWeekday(d) {
+  return ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'][d.getDay()];
+}
+
+const moneyFmt = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2, minimumFractionDigits: 0 });
+export function fmtMoney(n) {
+  return moneyFmt.format(Math.round((Number(n) || 0) * 100) / 100);
+}
+// «1 234,5» / «1234.50» / «1 234 ₽» → 1234.5
+export function parseMoney(s) {
+  if (typeof s === 'number') return s;
+  const v = Number(String(s || '').replace(/[\s ₽]/g, '').replace(',', '.'));
+  return Number.isFinite(v) ? Math.round(v * 100) / 100 : NaN;
+}
+export const uid6 = () => Math.random().toString(36).slice(2, 8);

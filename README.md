@@ -96,10 +96,28 @@ src/
     CalendarView.jsx   месячный календарь
     ProfileView.jsx    статистика + темы + аватары
     Avatar.jsx         сова / гусь
+    Mood.jsx           трекер настроения (легенды, календарь, виджет дня)
+    MurmurView.jsx     «Мурмур»: фильмы / сериалы / игры с оценками
+    BudgetView.jsx     бюджет-планнер
 public/
   manifest.webmanifest, sw.js, иконки   PWA
 firestore.rules        правила доступа (вставить в Firebase)
 ```
+
+---
+
+## Важно после обновления
+
+Новые разделы хранятся в новых коллекциях Firestore (`moods`, `moodLegends`,
+`murmur`, `wallets`, `budgetTx`, `budgetProjects`, `receipts`, `receiptImages`).
+**Перед деплоем вставь обновлённый `firestore.rules` в консоль Firebase
+(Firestore → Rules) и опубликуй**, иначе эти разделы будут пустыми с ошибкой доступа.
+
+Фото чеков хранятся сжатыми прямо в Firestore (≈100–300 КБ на чек), без Firebase
+Storage — он на новых проектах требует платный тариф Blaze.
+
+Ярлыки PWA (долгое нажатие на иконку на Android): «Сегодня», «Бюджет», «Мурмур».
+Прямые ссылки: `?tab=tasks&view=today`, `?tab=budget`, `?tab=murmur`.
 
 ---
 

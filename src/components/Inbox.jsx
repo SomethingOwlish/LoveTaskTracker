@@ -1,5 +1,6 @@
 import { Avatar } from './Avatar';
 import { tsMs } from '../lib/util';
+import { Sheet } from './Sheet';
 
 // Описание каждого типа уведомления: иконка (Font Awesome) и текст действия.
 const TYPES = {
@@ -10,12 +11,7 @@ const TYPES = {
 
 export function Inbox({ notifs, userOf, onOpen, onClose, onClear, viewedFrom = 0 }) {
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <div className="sheet-head">
-          <h2>Уведомления</h2>
-          <button className="close" onClick={onClose} aria-label="Закрыть">×</button>
-        </div>
+    <Sheet title="Уведомления" onClose={onClose}>
 
         {notifs.length === 0 ? (
           <p className="empty"><i className="fa-regular fa-bell-slash" style={{ marginRight: 8 }} />Пока пусто.</p>
@@ -46,8 +42,7 @@ export function Inbox({ notifs, userOf, onOpen, onClose, onClear, viewedFrom = 0
             })}
           </>
         )}
-      </div>
-    </div>
+    </Sheet>
   );
 }
 
