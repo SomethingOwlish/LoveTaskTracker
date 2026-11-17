@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { reportError } from '../lib/toast';
 import { Sheet, Seg, Switch, loadPref, savePref } from './Sheet';
 import { Avatar } from './Avatar';
 import {
@@ -156,7 +157,7 @@ function ReceiptCapture({ ctx, extra, onBusy, label = 'Чек' }) {
       const id = await addReceipt({ ...r, authorUid: ctx.me.uid });
       setDone({ id, qr: r.qr });
     } catch (err) {
-      alert(err.message);
+      reportError(err);
     } finally {
       onBusy?.(false);
     }
@@ -403,7 +404,7 @@ function ProjectSheet({ ctx, project, onClose }) {
   const save = () => {
     const t = parseMoney(target);
     saveProject(project?.id, { name: name.trim() || 'Проект', note: note.trim(), target: Number.isFinite(t) && t > 0 ? t : null, color })
-      .catch((e) => alert(e.message));
+      .catch((e) => reportError(e));
     if (!project) onClose(); else setEdit(false);
   };
 
@@ -483,7 +484,7 @@ function WalletSheet({ ctx, wallet, onClose }) {
     if (Number.isFinite(desired) && desired !== current) data.balance = desired;
     else if (!wallet) data.balance = Number.isFinite(desired) ? desired : 0;
     if (!wallet) data.order = ctx.wallets.length;
-    saveWallet(wallet?.id, data).catch((e) => alert(e.message));
+    saveWallet(wallet?.id, data).catch((e) => reportError(e));
     onClose();
   };
 
@@ -568,13 +569,13 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
       type, amount: sum, walletId, toWalletId, category: category || cats[cats.length - 1].id, note: note.trim(),
       date: when, planned, projectId, receiptId,
       items: type === 'expense' ? items.map((x) => ({ id: x.id, title: x.title.trim(), amount: parseMoney(x.amountStr) || 0, category: x.category || category })) : [],
-    }, ctx.me.uid, ctx.known).catch((e) => alert('Не сохранилось: ' + e.message));
+    }, ctx.me.uid, ctx.known).catch((e) => reportError(e, 'Не сохранилось'));
     onClose();
   };
 
   const openReceipt = async (id) => {
     setViewer('loading');
-    try { setViewer(await loadReceiptImage(id)); } catch (e) { alert(e.message); setViewer(null); }
+    try { setViewer(await loadReceiptImage(id)); } catch (e) { reportError(e); setViewer(null); }
   };
 
   const newReceipts = ctx.receipts.filter((r) => r.status !== 'parsed' && r.id !== receiptId);
@@ -745,7 +746,7 @@ function ReceiptsSheet({ ctx, onClose }) {
   const list = all ? (allList || []) : ctx.receipts;
   const open = async (id) => {
     setViewer('loading');
-    try { setViewer(await loadReceiptImage(id)); } catch (e) { alert(e.message); setViewer(null); }
+    try { setViewer(await loadReceiptImage(id)); } catch (e) { reportError(e); setViewer(null); }
   };
   return (
     <Sheet title="Чеки" onClose={onClose}>

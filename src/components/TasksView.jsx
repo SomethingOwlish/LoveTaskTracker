@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { reportError } from '../lib/toast';
 import { TaskCard } from './TaskCard';
 import { MatrixView } from './MatrixView';
 import { Avatar } from './Avatar';
@@ -54,7 +55,7 @@ function QuickAdd({ me, partner, deadline }) {
     const dl = deadline ? deadline() : null;
     // не ждём ответа сервера — задачи появятся сразу из локального кэша
     lines.forEach((title) => {
-      createTask({ title, authorUid: me.uid, assigneeUid, deadline: dl }).catch((e) => alert('Не сохранилось: ' + e.message));
+      createTask({ title, authorUid: me.uid, assigneeUid, deadline: dl }).catch((e) => reportError(e, 'Не сохранилось'));
     });
     setFlash(lines.length === 1 ? 'Добавлено' : `Добавлено: ${lines.length}`);
     setTimeout(() => setFlash(''), 1500);

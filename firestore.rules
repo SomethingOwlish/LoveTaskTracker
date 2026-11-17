@@ -3,18 +3,36 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // Только эти два адреса имеют доступ ко всем данным.
+    function emails() {
+      return ['argentummortis@gmail.com', 'arentakasi@gmail.com'];
+    }
     function allowed() {
-      return request.auth != null &&
-        request.auth.token.email in [
-          'argentummortis@gmail.com',
-          'arentakasi@gmail.com'
-        ];
+      return request.auth != null && request.auth.token.email in emails();
+    }
+    function me() {
+      return request.auth.token.email;
+    }
+    // необязательное числовое поле
+    function optNumber(d, f) {
+      return !d.keys().hasAny([f]) || d[f] is number;
+    }
+    function shortText(v, max) {
+      return v is string && v.size() <= max;
     }
 
+    // ---------- Задачи ----------
+    function validTask(d) {
+      return shortText(d.title, 500) && d.title.size() > 0
+        && d.status in ['open', 'in_progress', 'returned', 'in_review', 'done', 'approved']
+        && d.authorUid in emails()
+        && d.assigneeUid in emails();
+    }
     match /tasks/{taskId} {
-      allow read, write: if allowed();
+      allow read, delete: if allowed();
+      allow create, update: if allowed() && validTask(request.resource.data);
       match /comments/{commentId} {
-        allow read, write: if allowed();
+        allow read, delete: if allowed();
+        allow create, update: if allowed() && shortText(request.resource.data.text, 4000);
       }
     }
 
@@ -26,30 +44,63 @@ service cloud.firestore {
       allow read, write: if allowed();
     }
 
-    // Настроение: отметки по дням и личные легенды цветов.
-    // Писать можно только свои записи, читать — обе.
+    // Личное состояние: читать можно обоим, писать — только своё.
+    match /userState/{uid} {
+      allow read: if allowed();
+      allow write: if allowed() && uid == me();
+    }
+
+    // ---------- Настроение ----------
     match /moods/{moodId} {
       allow read: if allowed();
-      allow create, update: if allowed() && request.resource.data.uid == request.auth.token.email
-                            && moodId.matches(request.auth.token.email + '_.*');
-      allow delete: if allowed() && moodId.matches(request.auth.token.email + '_.*');
+      allow create, update: if allowed() && request.resource.data.uid == me()
+                            && moodId.matches(me() + '_.*')
+                            && request.resource.data.day is string;
+      allow delete: if allowed() && moodId.matches(me() + '_.*');
     }
     match /moodLegends/{uid} {
       allow read: if allowed();
-      allow write: if allowed() && uid == request.auth.token.email;
+      allow write: if allowed() && uid == me();
     }
 
-    // Мурмур: фильмы / сериалы / игры
+    // ---------- Мурмур ----------
     match /murmur/{itemId} {
+      allow read, delete: if allowed();
+      allow create, update: if allowed()
+        && request.resource.data.kind in ['movie', 'series', 'game']
+        && shortText(request.resource.data.title, 300)
+        && request.resource.data.status in ['want', 'done'];
+    }
+
+    // ---------- Бюджет ----------
+    match /wallets/{id} {
+      allow read, delete: if allowed();
+      allow create, update: if allowed()
+        && shortText(request.resource.data.name, 100)
+        && optNumber(request.resource.data, 'balance');
+    }
+    match /budgetTx/{id} {
+      allow read, delete: if allowed();
+      allow create, update: if allowed()
+        && request.resource.data.type in ['income', 'expense', 'transfer']
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.amount < 100000000
+        && request.resource.data.planned is bool;
+    }
+    match /budgetProjects/{id} {
+      allow read, delete: if allowed();
+      allow create, update: if allowed()
+        && shortText(request.resource.data.name, 200)
+        && optNumber(request.resource.data, 'income')
+        && optNumber(request.resource.data, 'expense');
+    }
+    match /receipts/{id} {
       allow read, write: if allowed();
     }
-
-    // Бюджет
-    match /wallets/{id} { allow read, write: if allowed(); }
-    match /budgetTx/{id} { allow read, write: if allowed(); }
-    match /budgetProjects/{id} { allow read, write: if allowed(); }
-    match /receipts/{id} { allow read, write: if allowed(); }
-    match /receiptImages/{id} { allow read, write: if allowed(); }
+    match /receiptImages/{id} {
+      allow read, write: if allowed();
+    }
 
     match /{document=**} {
       allow read, write: if false;

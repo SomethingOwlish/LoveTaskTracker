@@ -1,10 +1,14 @@
 import { db } from '../firebase';
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, writeBatch, deleteField,
+  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, writeBatch, deleteField,
   onSnapshot, query, orderBy, where, limit, serverTimestamp, Timestamp, arrayUnion, arrayRemove,
 } from 'firebase/firestore';
 import { nextFutureRecurrence } from './recurrence';
 import { tsMs } from './util';
+import { reportError } from './toast';
+
+// onSnapshot с понятной ошибкой вместо молча пустого экрана
+const listen = (q, fn) => onSnapshot(q, fn, (e) => reportError(e));
 
 const tasksCol = collection(db, 'tasks');
 const eventsCol = collection(db, 'events');
@@ -27,10 +31,10 @@ function mergeSubs(queries, cb, sort) {
     if (sort) list.sort(sort);
     cb(list);
   };
-  const unsubs = queries.map((q, i) => onSnapshot(q, (snap) => {
+  const unsubs = queries.map((q, i) => listen(q, (snap) => {
     parts[i] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     emit();
-  }, (e) => console.warn('subscription', e)));
+  }));
   return () => unsubs.forEach((u) => u());
 }
 
@@ -55,7 +59,7 @@ export function subscribeTasks(cb) {
 // Архив закрытых — только по явному запросу (фильтр «Закрытые»).
 export function subscribeClosedTasks(cb, max = 100) {
   const q = query(tasksCol, orderBy('completedAt', 'desc'), limit(max));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+  return listen(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
 
 export async function fetchTask(id) {
@@ -66,11 +70,11 @@ export async function fetchTask(id) {
 // События календаря — только видимый диапазон дат.
 export function subscribeEvents(from, to, cb) {
   const q = query(eventsCol, where('date', '>=', Timestamp.fromDate(from)), where('date', '<', Timestamp.fromDate(to)), orderBy('date', 'asc'));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+  return listen(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
 export function subscribeComments(taskId, cb) {
   const q = query(collection(db, 'tasks', taskId, 'comments'), orderBy('createdAt', 'asc'));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+  return listen(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
 
 /* ---------------- Задачи ---------------- */
@@ -113,8 +117,28 @@ export async function updateTask(id, patch) {
   return updateDoc(doc(db, 'tasks', id), clean);
 }
 
-export async function deleteTask(id) {
-  return deleteDoc(doc(db, 'tasks', id));
+/* Удаление с возможностью отмены: сам документ удаляем сразу, а комментарии
+   и уведомления по задаче подчищаем через несколько секунд, если удаление
+   не отменили. Отмена восстанавливает документ с тем же id. */
+const pendingCleanup = new Map();
+export async function deleteTask(task) {
+  const id = typeof task === 'string' ? task : task.id;
+  await deleteDoc(doc(db, 'tasks', id));
+  pendingCleanup.set(id, setTimeout(() => cleanupTask(id).catch(() => {}), 8000));
+}
+export async function restoreTask(task) {
+  clearTimeout(pendingCleanup.get(task.id));
+  pendingCleanup.delete(task.id);
+  const { id, ...data } = task;
+  return setDoc(doc(db, 'tasks', id), data);
+}
+async function cleanupTask(id) {
+  pendingCleanup.delete(id);
+  const [comments, notifs] = await Promise.all([
+    getDocs(collection(db, 'tasks', id, 'comments')),
+    getDocs(query(notifsCol, where('taskId', '==', id))),
+  ]);
+  await Promise.all([...comments.docs, ...notifs.docs].map((d) => deleteDoc(d.ref)));
 }
 
 export async function toggleLike(task, uid) {
@@ -132,7 +156,8 @@ export async function toggleLike(task, uid) {
 export async function completeTask(task) {
   // задача с проверкой и ещё не на ревью → отправляем на проверку автору
   if (task.needsReview && task.status !== 'in_review' && task.status !== 'approved') {
-    return updateDoc(doc(db, 'tasks', task.id), { status: 'in_review', updatedAt: serverTimestamp() });
+    const done = updateDoc(doc(db, 'tasks', task.id), { status: 'in_review', updatedAt: serverTimestamp() });
+    return { kind: 'review', done };
   }
   return closeWithRecurrence(task, 'done');
 }
@@ -164,7 +189,27 @@ async function closeWithRecurrence(task, status) {
     patch.nextTaskId = nextRef.id;
   }
   batch.update(ref, patch);
-  return batch.commit();
+  // промис не ждём целиком: без сети commit резолвится только после синхронизации,
+  // а id следующей копии нужен сразу (для «Отменить»)
+  const done = batch.commit();
+  return { kind: 'closed', nextTaskId: patch.nextTaskId || null, done };
+}
+
+/* «Отменить» после отметки «выполнено»: вернуть прежний статус и убрать
+   поставленную следующую копию, если её ещё не трогали. */
+export async function undoComplete(task, result) {
+  const patch = { status: task.status, updatedAt: serverTimestamp() };
+  if (result?.kind === 'closed') {
+    patch.completedAt = null;
+    patch.nextTaskId = deleteField();
+    if (result.nextTaskId) {
+      try {
+        const snap = await getDoc(doc(db, 'tasks', result.nextTaskId));
+        if (snap.exists() && snap.data().status === 'open') await deleteDoc(snap.ref);
+      } catch { /* нет сети — копия останется */ }
+    }
+  }
+  return updateDoc(doc(db, 'tasks', task.id), patch);
 }
 
 function recurrenceCopy(task) {
@@ -224,7 +269,7 @@ export async function addComment(task, authorUid, text) {
 /* ---------------- Уведомления ---------------- */
 export function subscribeNotifications(uid, cb) {
   const q = query(notifsCol, where('recipientUid', '==', uid));
-  return onSnapshot(q, (snap) => {
+  return listen(q, (snap) => {
     const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     list.sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt));
     cb(list);
@@ -267,10 +312,10 @@ export async function deleteEvent(id) {
 // Отметки за диапазон дней (ключи YYYY-MM-DD сравниваются как строки).
 export function subscribeMoods(fromKey, toKey, cb) {
   const q = query(collection(db, 'moods'), where('day', '>=', fromKey), where('day', '<=', toKey));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+  return listen(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
 export function subscribeMoodLegends(cb) {
-  return onSnapshot(collection(db, 'moodLegends'), (snap) => {
+  return listen(collection(db, 'moodLegends'), (snap) => {
     const map = {};
     snap.docs.forEach((d) => { map[d.id] = d.data().items || []; });
     cb(map);
@@ -304,7 +349,7 @@ export function subscribeMurmur(cb) {
   ], cb, newestFirst);
 }
 export function subscribeMurmurDone(cb) {
-  return onSnapshot(query(murmurCol, where('status', '==', 'done')), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+  return listen(query(murmurCol, where('status', '==', 'done')), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
 export async function addMurmur({ kind, title, note = '', link = '', uid }) {
   const t = title.trim();
@@ -338,4 +383,13 @@ export async function rateMurmur(item, uid, rating, review) {
 }
 export async function unwatchMurmur(item) {
   return updateDoc(doc(db, 'murmur', item.id), { status: 'want', doneAt: null, doneBy: null, ratings: {}, reviews: {} });
+}
+
+/* ---------------- Личное состояние ---------------- */
+// userState/{email} = { notifReadAt, projectColors }
+export function subscribeUserState(uid, cb) {
+  return onSnapshot(doc(db, 'userState', uid), (s) => cb(s.data() || {}, !s.metadata.fromCache), (e) => reportError(e));
+}
+export function saveUserState(uid, patch) {
+  return setDoc(doc(db, 'userState', uid), patch, { merge: true });
 }

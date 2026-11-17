@@ -1,21 +1,25 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
 import { auth, provider } from './firebase';
 import { ALLOWED_EMAILS, USERS, userByEmail } from './config';
 import {
   subscribeTasks, subscribeNotifications, clearNotifications, pruneNotifications, fetchTask,
-  subscribeMoods, subscribeMoodLegends, subscribeMurmur,
+  subscribeMoods, subscribeMoodLegends, subscribeMurmur, subscribeUserState, saveUserState,
 } from './lib/db';
+import { Toasts, OfflineBar } from './components/Toasts';
 import { dayKey } from './lib/util';
 import { projectsOf, allTags, tsMs } from './lib/util';
 import { Avatar } from './components/Avatar';
 import { TasksView } from './components/TasksView';
-import { CalendarView } from './components/CalendarView';
-import { ProfileView } from './components/ProfileView';
 import { TaskModal } from './components/TaskModal';
 import { Inbox, unreadCount } from './components/Inbox';
-import { MurmurView, murmurAwaitingMe } from './components/MurmurView';
-import { BudgetView } from './components/BudgetView';
+import { murmurAwaitingMe } from './lib/murmurUtil';
+
+// Редкие вкладки грузим по требованию — первый запуск на телефоне легче.
+const CalendarView = lazy(() => import('./components/CalendarView').then((m) => ({ default: m.CalendarView })));
+const ProfileView = lazy(() => import('./components/ProfileView').then((m) => ({ default: m.ProfileView })));
+const MurmurView = lazy(() => import('./components/MurmurView').then((m) => ({ default: m.MurmurView })));
+const BudgetView = lazy(() => import('./components/BudgetView').then((m) => ({ default: m.BudgetView })));
 import { loadPref, savePref } from './components/Sheet';
 
 // Ярлык PWA / ссылка вида ?tab=tasks&view=today открывает нужный экран сразу.
@@ -84,6 +88,19 @@ export default function App() {
     return () => unsub.forEach((u) => u());
   }, [user]);
 
+  // После входа, когда телефон свободен, подгружаем остальные вкладки —
+  // service worker их закэширует, и они откроются даже без сети.
+  useEffect(() => {
+    if (!user) return;
+    const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 2500));
+    idle(() => {
+      import('./components/CalendarView');
+      import('./components/ProfileView');
+      import('./components/MurmurView');
+      import('./components/BudgetView');
+    });
+  }, [user]);
+
   // Для виджета «Настроение сегодня» нужна только сегодняшняя дата.
   // Ключ дня обновляется, когда приложение возвращают на экран после полуночи.
   const [today, setToday] = useState(dayKey());
@@ -114,19 +131,31 @@ export default function App() {
     return info ? { uid, email: uid, ...info } : { uid, email: uid, name: '?', avatar: 'owl' };
   };
 
-  // загрузка цветов проектов для текущего пользователя
+  // Личное состояние (цвета проектов, когда читали уведомления) хранится в
+  // Firestore userState/{email} — одинаково на телефоне и на компьютере.
+  // localStorage — только запасной вариант до первого ответа сервера.
   useEffect(() => {
     if (!me) return;
-    try {
-      setProjectColors(JSON.parse(localStorage.getItem('projectColors:' + me.email)) || {});
-    } catch { setProjectColors({}); }
-  }, [me?.email]);
-
-  // подписка на уведомления + загрузка времени последнего прочтения
-  useEffect(() => {
-    if (!me) return;
+    let local = {};
+    try { local = JSON.parse(localStorage.getItem('projectColors:' + me.email)) || {}; } catch { /* пусто */ }
+    setProjectColors(local);
     setReadAt(Number(localStorage.getItem('notifReadAt:' + me.email)) || 0);
-    return subscribeNotifications(me.uid, setNotifs);
+    let migrated = false;
+    const unsub = subscribeUserState(me.uid, (st, fromServer) => {
+      if (st.projectColors) setProjectColors(st.projectColors);
+      if (st.notifReadAt) setReadAt((p) => Math.max(p, st.notifReadAt));
+      // разовый перенос старых локальных настроек в Firestore
+      if (fromServer && !migrated) {
+        migrated = true;
+        const patch = {};
+        if (!st.projectColors && Object.keys(local).length) patch.projectColors = local;
+        const lr = Number(localStorage.getItem('notifReadAt:' + me.email)) || 0;
+        if (lr > (st.notifReadAt || 0)) patch.notifReadAt = lr;
+        if (Object.keys(patch).length) saveUserState(me.uid, patch).catch(() => {});
+      }
+    });
+    const unsubN = subscribeNotifications(me.uid, setNotifs);
+    return () => { unsub(); unsubN(); };
   }, [me?.uid]);
 
   const unread = useMemo(() => unreadCount(notifs, readAt), [notifs, readAt]);
@@ -138,7 +167,10 @@ export default function App() {
     const now = Date.now();
     pruneNotifications(notifs).catch(() => {});
     setReadAt(now);
-    if (me) localStorage.setItem('notifReadAt:' + me.email, String(now));
+    if (me) {
+      localStorage.setItem('notifReadAt:' + me.email, String(now));
+      saveUserState(me.uid, { notifReadAt: now }).catch(() => {});
+    }
   };
 
   const openFromNotif = async (taskId) => {
@@ -151,7 +183,10 @@ export default function App() {
   const setProjectColor = (project, color) => {
     setProjectColors((prev) => {
       const next = { ...prev, [project]: color };
-      if (me) localStorage.setItem('projectColors:' + me.email, JSON.stringify(next));
+      if (me) {
+        localStorage.setItem('projectColors:' + me.email, JSON.stringify(next));
+        saveUserState(me.uid, { projectColors: next }).catch(() => {});
+      }
       return next;
     });
   };
@@ -206,6 +241,7 @@ export default function App() {
   // ---- основное приложение ----
   return (
     <div className="app">
+      <OfflineBar />
       <div className="topbar">
         <div className="brand">
           <Avatar email={me.email} avatar={me.avatar} size="lg" />
@@ -221,6 +257,7 @@ export default function App() {
       </div>
 
       <main className="screen" key={tab}>
+        <Suspense fallback={<div className="empty"><i className="fa-solid fa-spinner fa-spin" /></div>}>
         {tab === 'tasks' && (
           <TasksView tasks={tasks} me={me} users={users} userOf={userOf} onOpen={setModal} projectColors={projectColors}
             moods={moods} moodLegends={moodLegends} initialMode={START_VIEW} />
@@ -235,6 +272,7 @@ export default function App() {
             projectColors={projectColors} setProjectColor={setProjectColor}
           />
         )}
+        </Suspense>
       </main>
 
       {tab === 'tasks' && (
@@ -249,6 +287,8 @@ export default function App() {
           </button>
         ))}
       </nav>
+
+      <Toasts />
 
       {showInbox && (
         <Inbox notifs={notifs} userOf={userOf} viewedFrom={viewedFrom}

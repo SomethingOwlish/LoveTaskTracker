@@ -50,6 +50,9 @@ npm run dev
 npm run deploy   # vite build + wrangler deploy
 ```
 
+Тесты: `npm test` (vitest — повторы задач, разбор QR чека, счётчики бюджета).
+GitHub Actions (`.github/workflows/ci.yml`) гоняет тесты и сборку на каждый PR.
+
 Автодеплой при пуше в `main`: дашборд Cloudflare → Workers & Pages →
 `lovetasktracker` → Settings → Builds → Connect (репозиторий GitHub),
 build command `npm run build`, deploy command `npx wrangler deploy`.
