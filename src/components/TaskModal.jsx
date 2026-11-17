@@ -1,19 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Avatar } from './Avatar';
+import { Sheet, Switch } from './Sheet';
 import { toDate, toLocalInput, fmtDateTime } from '../lib/util';
 import {
   createTask, updateTask, deleteTask, completeTask, reopenTask,
   approveTask, returnTask, addComment, subscribeComments,
 } from '../lib/db';
-
-function Switch({ on, onChange, label }) {
-  return (
-    <div className={`switch ${on ? 'on' : ''}`} onClick={() => onChange(!on)} role="switch" aria-checked={on}>
-      <span className="track"><span className="knob" /></span>
-      <span>{label}</span>
-    </div>
-  );
-}
 
 function TagEditor({ value, onChange, placeholder, kind, suggestions = [] }) {
   const [text, setText] = useState('');
@@ -111,6 +103,13 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
     recurrence: task?.recurrence || 'none',
   }));
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const [busy, setBusy] = useState(false);
+  // На телефоне длинная форма пугает: редкие поля прячем под «Ещё параметры»,
+  // но раскрываем сразу, если в задаче они уже заполнены.
+  const [more, setMore] = useState(() => Boolean(task) && Boolean(
+    (task.priorityMatrix?.importance ?? 0) !== 0 || (task.priorityMatrix?.urgency ?? 0) !== 0 ||
+    task.estimateMin != null || task.actualMin != null || task.tags?.length || task.projectTags?.length ||
+    task.link || task.checklist?.length || task.needsReview));
 
   const [comments, setComments] = useState([]);
   const [cText, setCText] = useState('');
@@ -137,19 +136,32 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
     recurrence: f.recurrence,
   }), [f, task, me.uid]);
 
+  // Пишем в Firestore без ожидания ответа: с локальным кэшем изменения видны
+  // сразу, а без сети промис висел бы до синхронизации и шторка не закрывалась.
+  const act = (promise) => {
+    Promise.resolve(promise).catch((e) => alert('Не сохранилось: ' + e.message));
+    onClose();
+  };
+
   const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
     if (editing) {
-      await updateTask(task.id, {
+      act(updateTask(task.id, {
         title: payload.title, description: payload.description, assigneeUid: payload.assigneeUid,
         priorityMatrix: { importance: payload.importance, urgency: payload.urgency },
         deadline: payload.deadline, estimateMin: payload.estimateMin, actualMin: payload.actualMin,
         tags: payload.tags, projectTags: payload.projectTags, link: payload.link,
         checklist: payload.checklist, needsReview: payload.needsReview, recurrence: payload.recurrence,
-      });
+      }));
     } else {
-      await createTask(payload);
+      act(createTask(payload));
     }
-    onClose();
+    } catch (e) {
+      alert('Не сохранилось: ' + e.message);
+      setBusy(false);
+    }
   };
 
   // ревью: я автор и задача пришла на проверку
@@ -157,12 +169,14 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
   const inReview = task?.status === 'in_review';
 
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <div className="sheet-head">
-          <h2>{editing ? 'Задача' : 'Новая задача'}</h2>
-          <button className="close" onClick={onClose} aria-label="Закрыть">×</button>
-        </div>
+    <Sheet
+      title={editing ? 'Задача' : 'Новая задача'}
+      onClose={onClose}
+      footer={<>
+        <button className="btn" onClick={onClose}>Отмена</button>
+        <button className="btn btn-accent" onClick={save} disabled={busy}>{editing ? 'Сохранить' : 'Создать'}</button>
+      </>}
+    >
 
         <div className="field">
           <label>Название</label>
@@ -186,6 +200,34 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
         </div>
 
         <div className="field">
+          <label>Дедлайн</label>
+          <input className="input" type="datetime-local" value={f.deadline} onChange={(e) => set('deadline', e.target.value)} />
+          <div className="row" style={{ marginTop: 8 }}>
+            <button type="button" className="btn btn-sm" onClick={() => { const d = new Date(); d.setHours(18, 0, 0, 0); set('deadline', toLocalInput(d)); }}>Сегодня</button>
+            <button type="button" className="btn btn-sm" onClick={() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(18, 0, 0, 0); set('deadline', toLocalInput(d)); }}>Завтра</button>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => set('deadline', '')}>Очистить</button>
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Повтор</label>
+          <select className="input" value={f.recurrence} onChange={(e) => set('recurrence', e.target.value)}>
+            <option value="none">Без повтора</option>
+            <option value="daily">Каждый день</option>
+            <option value="weekly">Каждую неделю</option>
+            <option value="biweekly">Раз в две недели</option>
+            <option value="monthly">Каждый месяц</option>
+          </select>
+          {f.recurrence !== 'none' && <div className="hint">Когда отметишь выполненной — сама появится следующая такая же.</div>}
+        </div>
+
+        <button type="button" className="more-toggle" onClick={() => setMore((v) => !v)} aria-expanded={!!more}>
+          {more ? 'Скрыть параметры' : 'Ещё параметры'} <i className={`fa-solid fa-chevron-${more ? 'up' : 'down'}`} />
+        </button>
+
+        {more && (
+          <>
+        <div className="field">
           <label>Важность (← важно · не важно →): {f.importance > 0 ? '+' : ''}{f.importance}</label>
           <div className="slider-row">
             <input type="range" min="-5" max="5" value={f.importance} onChange={(e) => set('importance', Number(e.target.value))} />
@@ -197,16 +239,6 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
           <div className="slider-row">
             <input type="range" min="-5" max="5" value={f.urgency} onChange={(e) => set('urgency', Number(e.target.value))} />
             <span className="val">{f.urgency > 0 ? '+' : ''}{f.urgency}</span>
-          </div>
-        </div>
-
-        <div className="field">
-          <label>Дедлайн</label>
-          <input className="input" type="datetime-local" value={f.deadline} onChange={(e) => set('deadline', e.target.value)} />
-          <div className="row" style={{ marginTop: 8 }}>
-            <button type="button" className="btn btn-sm" onClick={() => { const d = new Date(); d.setHours(18, 0, 0, 0); set('deadline', toLocalInput(d)); }}>Сегодня</button>
-            <button type="button" className="btn btn-sm" onClick={() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(18, 0, 0, 0); set('deadline', toLocalInput(d)); }}>Завтра</button>
-            <button type="button" className="btn btn-sm btn-ghost" onClick={() => set('deadline', '')}>Очистить</button>
           </div>
         </div>
 
@@ -240,27 +272,19 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
           <ChecklistEditor items={f.checklist} onChange={(v) => set('checklist', v)} />
         </div>
 
-        <div className="row" style={{ alignItems: 'center', marginBottom: 14 }}>
+        <div style={{ marginBottom: 14 }}>
           <Switch on={f.needsReview} onChange={(v) => set('needsReview', v)} label="С проверкой автором" />
-          <div className="field" style={{ marginBottom: 0 }}>
-            <label>Повтор</label>
-            <select className="input" value={f.recurrence} onChange={(e) => set('recurrence', e.target.value)}>
-              <option value="none">Без повтора</option>
-              <option value="daily">Каждый день</option>
-              <option value="weekly">Каждую неделю</option>
-              <option value="biweekly">Раз в две недели</option>
-              <option value="monthly">Каждый месяц</option>
-            </select>
-          </div>
         </div>
+          </>
+        )}
 
         {/* Ревью-флоу */}
         {inReview && iAmAuthor && (
           <div className="card surface-2" style={{ marginBottom: 14 }}>
             <p style={{ margin: '0 0 10px', fontSize: 14 }}>Задача выполнена и ждёт твоей проверки.</p>
             <div className="row">
-              <button className="btn btn-accent" onClick={async () => { await approveTask(task); onClose(); }}>Принять</button>
-              <button className="btn" onClick={async () => { await returnTask(task); onClose(); }}>Вернуть в работу</button>
+              <button className="btn btn-accent" onClick={() => act(approveTask(task))}>Принять</button>
+              <button className="btn" onClick={() => act(returnTask(task))}>Вернуть в работу</button>
             </div>
           </div>
         )}
@@ -297,21 +321,15 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
         {editing && (
           <div className="row" style={{ marginTop: 16 }}>
             {(task.status === 'done' || task.status === 'approved')
-              ? <button className="btn" onClick={async () => { await reopenTask(task); onClose(); }}>Вернуть в работу</button>
-              : <button className="btn" onClick={async () => { await completeTask(task); onClose(); }}>Выполнено</button>}
+              ? <button className="btn" onClick={() => act(reopenTask(task))}>Вернуть в работу</button>
+              : <button className="btn" onClick={() => act(completeTask(task))}>Выполнено</button>}
             <button className="btn btn-ghost" style={{ flex: 'none', color: 'var(--bad)' }}
-              onClick={async () => { if (confirm('Удалить задачу?')) { await deleteTask(task.id); onClose(); } }}>
+              onClick={() => { if (confirm('Удалить задачу?')) act(deleteTask(task.id)); }}>
               Удалить
             </button>
           </div>
         )}
 
-        {/* Липкая панель снизу: всегда под большим пальцем */}
-        <div className="sheet-foot">
-          <button className="btn" onClick={onClose}>Отмена</button>
-          <button className="btn btn-accent" onClick={save}>{editing ? 'Сохранить' : 'Создать'}</button>
-        </div>
-      </div>
-    </div>
+    </Sheet>
   );
 }

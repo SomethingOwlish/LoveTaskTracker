@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 
 // Конфиг из уже настроенного проекта tasktrackergando.
@@ -15,6 +15,17 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+
+// Локальный кэш в IndexedDB: на телефоне приложение открывается мгновенно
+// с последними данными и работает без сети (изменения доедут при появлении связи).
+let firestore;
+try {
+  firestore = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  });
+} catch {
+  firestore = initializeFirestore(app, {});
+}
+export const db = firestore;
 export const auth = getAuth(app);
 export const provider = new GoogleAuthProvider();

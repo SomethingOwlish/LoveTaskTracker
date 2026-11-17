@@ -12,9 +12,28 @@ export function MatrixView({ tasks, me, users, onOpen, projectColors = {} }) {
     return true;
   });
 
+  // Задачи с одинаковыми координатами (по умолчанию все в 0;0) раскладываем
+  // по маленькой спирали вокруг точки, чтобы они не прятались друг под другом.
+  const groups = {};
+  active.forEach((t) => {
+    const imp = t.priorityMatrix?.importance ?? 0;
+    const urg = t.priorityMatrix?.urgency ?? 0;
+    (groups[`${imp}:${urg}`] ||= { imp, urg, list: [] }).list.push(t);
+  });
+  const placed = [];
+  Object.values(groups).forEach(({ imp, urg, list }) => {
+    list.forEach((t, i) => {
+      const r = i === 0 ? 0 : 3.2 + 1.1 * Math.floor((i - 1) / 6);
+      const a = i * 2.4;
+      const left = Math.min(96, Math.max(4, 50 - imp * 9 + r * Math.cos(a)));
+      const top = Math.min(96, Math.max(4, 50 - urg * 9 + r * Math.sin(a)));
+      placed.push({ t, left, top });
+    });
+  });
+
   return (
     <div className="matrix-wrap">
-      <div className="seg" style={{ marginBottom: 10 }}>
+      <div className="seg seg-sm" style={{ marginBottom: 10 }}>
         <button className={scope === 'mine' ? 'on' : ''} onClick={() => setScope('mine')}>Мои</button>
         <button className={scope === 'partner' ? 'on' : ''} onClick={() => setScope('partner')}>{partner?.name || 'Партнёр'}</button>
         <button className={scope === 'all' ? 'on' : ''} onClick={() => setScope('all')}>Все</button>
@@ -37,11 +56,7 @@ export function MatrixView({ tasks, me, users, onOpen, projectColors = {} }) {
         <span className="q-label q-bl">Запланировать</span>
         <span className="q-label q-br">Можно<br />не делать</span>
 
-        {active.map((t) => {
-          const imp = t.priorityMatrix?.importance ?? 0;
-          const urg = t.priorityMatrix?.urgency ?? 0;
-          const left = 50 - imp * 9;
-          const top = 50 - urg * 9;
+        {placed.map(({ t, left, top }) => {
           const proj = (t.projectTags || [])[0];
           const color = (proj && projectColors[proj]) || 'var(--accent)';
           return (

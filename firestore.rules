@@ -26,6 +26,31 @@ service cloud.firestore {
       allow read, write: if allowed();
     }
 
+    // Настроение: отметки по дням и личные легенды цветов.
+    // Писать можно только свои записи, читать — обе.
+    match /moods/{moodId} {
+      allow read: if allowed();
+      allow create, update: if allowed() && request.resource.data.uid == request.auth.token.email
+                            && moodId.matches(request.auth.token.email + '_.*');
+      allow delete: if allowed() && moodId.matches(request.auth.token.email + '_.*');
+    }
+    match /moodLegends/{uid} {
+      allow read: if allowed();
+      allow write: if allowed() && uid == request.auth.token.email;
+    }
+
+    // Мурмур: фильмы / сериалы / игры
+    match /murmur/{itemId} {
+      allow read, write: if allowed();
+    }
+
+    // Бюджет
+    match /wallets/{id} { allow read, write: if allowed(); }
+    match /budgetTx/{id} { allow read, write: if allowed(); }
+    match /budgetProjects/{id} { allow read, write: if allowed(); }
+    match /receipts/{id} { allow read, write: if allowed(); }
+    match /receiptImages/{id} { allow read, write: if allowed(); }
+
     match /{document=**} {
       allow read, write: if false;
     }
