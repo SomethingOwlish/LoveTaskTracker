@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { reportError } from '../lib/toast';
 import { DOW, monthTitle, isSameDay, toDate, fmtDate, dayKey } from '../lib/util';
 import { createEvent, deleteEvent, subscribeEvents } from '../lib/db';
 import { Seg, loadPref, savePref } from './Sheet';
@@ -71,7 +72,7 @@ function PlanCalendar({ tasks, me, onOpen }) {
     if (!title) return;
     const at = new Date(selected);
     at.setHours(12, 0, 0, 0);
-    createEvent({ title, date: at, allDay: true, authorUid: me.uid }).catch((e) => alert(e.message));
+    createEvent({ title, date: at, allDay: true, authorUid: me.uid }).catch((e) => reportError(e));
     setEvTitle('');
     setAdding(false);
   };

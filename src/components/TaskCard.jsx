@@ -1,7 +1,9 @@
 import { Avatar } from './Avatar';
 import { toDate, fmtDate, quadrant, isClosed, startOfToday, isSameDay } from '../lib/util';
 import { RECURRENCE_LABEL } from '../lib/recurrence';
-import { completeTask, reopenTask, toggleLike } from '../lib/db';
+import { reopenTask, toggleLike } from '../lib/db';
+import { completeWithUndo } from '../lib/actions';
+import { reportError } from '../lib/toast';
 
 export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact = false }) {
   const author = userOf(task.authorUid);
@@ -25,9 +27,9 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact
 
   const onCheck = (e) => {
     e.stopPropagation();
-    if (closed) return reopenTask(task);
+    if (closed) return reopenTask(task).catch((e) => reportError(e));
     if (task.status === 'in_review') return onOpen(task);
-    return completeTask(task);
+    return completeWithUndo(task);
   };
 
   return (

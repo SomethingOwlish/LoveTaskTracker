@@ -689,3 +689,27 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 }
 /* аватар на выбранной кнопке сегмента — тёмным, иначе сливается с акцентом */
 .seg button.on .ava { color: var(--accent-ink) !important; }
+
+/* ---------- Тосты и полоска «нет сети» ---------- */
+.toasts {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  width: min(var(--maxw), calc(100% - 24px));
+  display: flex; flex-direction: column; gap: 8px; z-index: 90; pointer-events: none;
+}
+.toast {
+  pointer-events: auto; display: flex; align-items: center; gap: 10px;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 8px 10px 14px; box-shadow: var(--shadow); font-size: 14px;
+  animation: rise 0.18s ease;
+}
+.toast.error { border-color: color-mix(in srgb, var(--bad) 60%, transparent); }
+.toast.error .toast-text::before { content: '⚠ '; color: var(--bad); }
+.toast-text { flex: 1; min-width: 0; }
+.toast-btn { flex: none; border: 0; background: var(--accent); color: var(--accent-ink); font-weight: 700; border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.toast-x { flex: none; border: 0; background: transparent; color: var(--text-dim); font-size: 20px; width: 32px; height: 32px; }
+.offline-bar {
+  position: sticky; top: 0; z-index: 30; margin: 0 -14px 8px; padding: 8px 14px;
+  background: color-mix(in srgb, var(--warn) 18%, var(--surface)); color: var(--text);
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); font-size: 13px;
+}

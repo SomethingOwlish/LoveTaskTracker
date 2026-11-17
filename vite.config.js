@@ -6,4 +6,16 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   base: './',
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      // Firebase и React меняются редко — отдельным файлом, чтобы при обновлении
+      // приложения телефон не скачивал их заново.
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/firebase') || id.includes('node_modules/@firebase')) return 'firebase';
+          if (id.includes('node_modules/react')) return 'react';
+        },
+      },
+    },
+  },
 });

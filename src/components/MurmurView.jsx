@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { reportError } from '../lib/toast';
 import { Avatar } from './Avatar';
 import { Sheet, Seg, loadPref, savePref } from './Sheet';
 import { tsMs, fmtDate, toDate } from '../lib/util';
@@ -12,10 +13,7 @@ export const MURMUR_KINDS = {
   game: { label: 'Игры', one: 'игру', icon: 'fa-solid fa-gamepad', done: 'Прошли', doneVerb: 'Прошли' },
 };
 
-// Сколько записей ждут моей оценки (партнёр отметил просмотренным, я ещё нет).
-export function murmurAwaitingMe(items, uid) {
-  return items.filter((x) => x.status === 'done' && x.ratings?.[uid] == null).length;
-}
+export { murmurAwaitingMe } from '../lib/murmurUtil';
 
 export function MurmurView({ items: liveItems, me, users, userOf }) {
   const [kind, setKindState] = useState(() => loadPref('murmurKind', 'movie'));
@@ -67,7 +65,7 @@ export function MurmurView({ items: liveItems, me, users, userOf }) {
 
   const add = () => {
     const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-    lines.forEach((title) => addMurmur({ kind, title, uid: me.uid }).catch((e) => alert(e.message)));
+    lines.forEach((title) => addMurmur({ kind, title, uid: me.uid }).catch((e) => reportError(e)));
     setText('');
     if (filter === 'done') setFilter('want');
   };
@@ -190,7 +188,7 @@ function RateSheet({ item, me, K, onClose }) {
   const first = item.status !== 'done';
   const save = () => {
     if (score == null) return;
-    rateMurmur(item, me.uid, score, review.trim()).catch((e) => alert(e.message));
+    rateMurmur(item, me.uid, score, review.trim()).catch((e) => reportError(e));
     onClose();
   };
   return (
@@ -218,7 +216,7 @@ function EditSheet({ item, onClose }) {
   const [link, setLink] = useState(item.link || '');
   const [kind, setKind] = useState(item.kind);
   const save = () => {
-    updateMurmur(item.id, { title: title.trim() || item.title, note: note.trim(), link: link.trim() || null, kind }).catch((e) => alert(e.message));
+    updateMurmur(item.id, { title: title.trim() || item.title, note: note.trim(), link: link.trim() || null, kind }).catch((e) => reportError(e));
     onClose();
   };
   return (

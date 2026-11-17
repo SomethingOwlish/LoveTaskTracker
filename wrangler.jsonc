@@ -13,5 +13,8 @@
     // остальное — статика (бесплатно и без лимита запросов)
     "run_worker_first": ["/__/*"]
   },
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // Предварительные версии для веток и PR (Workers Builds → `wrangler preview`).
+  // Выкладываются на отдельный адрес и не трогают основной.
+  "previews": {}
 }

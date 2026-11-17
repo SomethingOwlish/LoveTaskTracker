@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "vite build && wrangler deploy",
-    "preview:cf": "vite build && wrangler dev"
+    "preview:cf": "vite build && wrangler dev",
+    "test": "vitest run"
   },
   "dependencies": {
     "firebase": "^11.6.0",
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
     "vite": "^5.4.10",
-    "wrangler": "^4.48.0"
+    "vitest": "^2.1.9",
+    "wrangler": "^4.157.0"
   }
 }
