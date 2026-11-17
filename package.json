@@ -21,6 +21,6 @@
     "@vitejs/plugin-react": "^4.3.4",
     "vite": "^5.4.10",
     "vitest": "^2.1.9",
-    "wrangler": "^4.48.0"
+    "wrangler": "^4.157.0"
   }
 }
