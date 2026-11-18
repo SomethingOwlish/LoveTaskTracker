@@ -82,6 +82,12 @@ workflow `pages-redirect.yml`) и снимает старый service worker.
 
 То же самое работает на Android через Chrome («Установить приложение»).
 
+### Расширение Chrome
+
+Быстрые задачи прямо из браузера: кнопка на панели, ⌘⇧Y и правый клик по
+тексту / ссылке / странице. Настройка и установка — в
+[extension/README.md](extension/README.md).
+
 ---
 
 ## 5. Структура
@@ -90,11 +96,13 @@ workflow `pages-redirect.yml`) и снимает старый service worker.
 src/
   App.jsx              вход, вкладки, управление темой
   firebase.js          инициализация Firebase
+  firebaseConfig.js    ключи проекта (общие с расширением)
   config.js            два пользователя (whitelist)
   theme.css            две темы + переменные
   styles.css           стили интерфейса
   lib/
     db.js              работа с Firestore (задачи, события, комментарии, ревью)
+    taskDoc.js         форма документа задачи (общая с расширением)
     recurrence.js      пересчёт повторений
     util.js            даты, квадранты, хелперы статистики
   components/
@@ -110,6 +118,7 @@ src/
     BudgetView.jsx     бюджет-планнер
 public/
   manifest.webmanifest, sw.js, иконки   PWA
+extension/             расширение Chrome (npm run ext:build → extension/dist)
 firestore.rules        правила доступа (вставить в Firebase)
 ```
 

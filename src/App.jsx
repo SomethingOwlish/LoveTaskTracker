@@ -22,6 +22,8 @@ import { loadPref, savePref } from './components/Sheet';
 const params = new URLSearchParams(window.location.search);
 const START_TAB = params.get('tab');
 const START_VIEW = params.get('view');
+// ?task=<id> — открыть задачу сразу (ссылка из уведомления расширения Chrome).
+const START_TASK = params.get('task');
 
 const TABS = [
   ['tasks', 'fa-solid fa-list-check', 'Задачи'],
@@ -127,6 +129,13 @@ export default function App() {
     if (!me) return;
     setReadAt(Number(localStorage.getItem('notifReadAt:' + me.email)) || 0);
     return subscribeNotifications(me.uid, setNotifs);
+  }, [me?.uid]);
+
+  // ?task=<id>: один раз дочитываем задачу и открываем её карточку
+  useEffect(() => {
+    if (!me || !START_TASK) return;
+    fetchTask(START_TASK).then((t) => { if (t) setModal(t); }).catch(() => {});
+    window.history.replaceState(null, '', window.location.pathname);
   }, [me?.uid]);
 
   const unread = useMemo(() => unreadCount(notifs, readAt), [notifs, readAt]);

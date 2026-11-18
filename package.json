@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "vite build && wrangler deploy",
-    "preview:cf": "vite build && wrangler dev"
+    "preview:cf": "vite build && wrangler dev",
+    "ext:build": "vite build -c extension/vite.config.js",
+    "ext:watch": "vite build -c extension/vite.config.js --watch"
   },
   "dependencies": {
     "firebase": "^11.6.0",
