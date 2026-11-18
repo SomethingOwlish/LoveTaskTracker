@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Sheet, Seg } from './Sheet';
 import { DOW, monthTitle, isSameDay, dayKey, fromDayKey, fmtDate, fmtWeekday, uid6 } from '../lib/util';
-import { saveMoodLegend, setMood, clearMood, setMoodNote, subscribeMoods } from '../lib/db';
+import { saveMoodLegend, setMood, clearMood, setMoodNote, subscribeMoods, subscribeDoneOnDay } from '../lib/db';
 
 // Легенда по умолчанию — пока человек не настроил свою.
 export const DEFAULT_MOOD_LEGEND = [
@@ -210,6 +210,11 @@ function MoodDaySheet({ day, me, partner, idx, legends, onClose }) {
   const d = fromDayKey(day);
 
   const pick = (it) => setMood(me.uid, day, it, note);
+
+  // что успели сделать в этот день — помогает вспомнить, каким он был
+  const [done, setDone] = useState(null);
+  useEffect(() => subscribeDoneOnDay(day, setDone), [day]);
+  const doneBy = (uid) => (done || []).filter((t) => t.assigneeUid === uid && (t.status === 'done' || t.status === 'approved'));
   const saveNote = () => { if (mine && note !== (mine.note || '')) setMoodNote(me.uid, day, note); };
 
   return (
@@ -231,6 +236,23 @@ function MoodDaySheet({ day, me, partner, idx, legends, onClose }) {
         <button className="btn btn-ghost btn-sm" style={{ color: 'var(--bad)' }} onClick={() => { clearMood(me.uid, day); onClose(); }}>
           Убрать отметку
         </button>
+      )}
+
+      <div className="section-title">Сделано в этот день</div>
+      {done === null ? <p className="hint"><i className="fa-solid fa-spinner fa-spin" /></p> : (
+        <div className="done-day">
+          {[me, partner].filter(Boolean).map((u) => {
+            const list = doneBy(u.uid);
+            return (
+              <div key={u.uid} className="done-col">
+                <div className="who"><Avatar email={u.email} avatar={u.avatar} /> {u.name} · {list.length}</div>
+                {list.length ? list.slice(0, 8).map((t) => <div key={t.id} className="done-item"><i className="fa-solid fa-check" /> {t.title}</div>)
+                  : <div className="hint" style={{ margin: 0 }}>—</div>}
+                {list.length > 8 && <div className="hint" style={{ margin: 0 }}>и ещё {list.length - 8}</div>}
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {partner && (
