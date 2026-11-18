@@ -377,7 +377,7 @@ export async function unwatchMurmur(item) {
 /* ---------------- Личное состояние ---------------- */
 // userState/{email} = { notifReadAt, projectColors }
 export function subscribeUserState(uid, cb) {
-  return onSnapshot(doc(db, 'userState', uid), (s) => cb(s.data() || {}, !s.metadata.fromCache), (e) => reportError(e));
+  return onSnapshot(doc(db, 'userState', uid), { includeMetadataChanges: true }, (s) => cb(s.data() || {}, !s.metadata.fromCache), (e) => reportError(e));
 }
 export function saveUserState(uid, patch) {
   return setDoc(doc(db, 'userState', uid), patch, { merge: true });
