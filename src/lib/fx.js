@@ -11,7 +11,8 @@ import { FALLBACK_FX as FALLBACK } from './currency';
 
 export function subscribeRates(cb) {
   let refreshed = false;
-  return onSnapshot(REF, (s) => {
+  // includeMetadataChanges — иначе при кэше не узнаем, что сервер ответил, и курс не обновится
+  return onSnapshot(REF, { includeMetadataChanges: true }, (s) => {
     const d = s.data();
     cb(d?.rates ? d : FALLBACK);
     const stale = !d?.updatedAt || Date.now() - d.updatedAt > MAX_AGE;

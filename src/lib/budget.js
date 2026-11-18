@@ -83,20 +83,30 @@ function sub(q, cb, sort) {
 }
 const byDateDesc = (a, b) => tsMs(b.date) - tsMs(a.date) || tsMs(b.createdAt) - tsMs(a.createdAt);
 
-export const subscribeWallets = (cb) => sub(walletsCol, (list, snap) => {
-  // первый запуск: кошельков нет на сервере — заводим стандартные.
-  // setDoc с фиксированными id идемпотентен, гонка двух телефонов не страшна.
-  if (!list.length && !snap.metadata.fromCache) {
-    DEFAULT_WALLETS.forEach(({ id, ...w }) => setDoc(doc(walletsCol, id), { ...w, currency: DEFAULT_BASE, balance: 0, archived: false }, { merge: true }));
-  }
-  // разово прячем бывшие кошельки «Карманные …», если в них ничего нет
-  if (!snap.metadata.fromCache) {
+// includeMetadataChanges: при локальном кэше подтверждение сервера без изменений
+// данных приходит только как смена metadata.fromCache — без этого флага
+// разовые действия «после ответа сервера» (засев, прятанье) не срабатывали.
+let walletsChecked = false;
+export const subscribeWallets = (cb) => onSnapshot(walletsCol, { includeMetadataChanges: true }, (snap) => {
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  onWallets(list, snap, cb);
+}, (e) => reportError(e));
+const onWallets = (list, snap, cb) => {
+  // разовые действия — один раз за запуск, после первого ответа сервера
+  if (!snap.metadata.fromCache && !walletsChecked) {
+    walletsChecked = true;
+    // первый запуск: кошельков нет — заводим стандартные (id фиксированы, гонка не страшна)
+    if (!list.length) {
+      DEFAULT_WALLETS.forEach(({ id, ...w }) => setDoc(doc(walletsCol, id), { ...w, currency: DEFAULT_BASE, balance: 0, archived: false }, { merge: true }));
+    }
+    // бывшие кошельки «Карманные …» прячем, если в них ничего нет
     list.forEach((w) => {
       if (LEGACY_POCKET_WALLETS.includes(w.id) && !w.archived && !w.balance) updateDoc(doc(walletsCol, w.id), { archived: true }).catch(() => {});
     });
   }
   cb(list);
-}, (a, b) => (a.order ?? 0) - (b.order ?? 0));
+};
 
 // Операции за месяц [from, to)
 export const subscribeTxRange = (from, to, cb) => sub(
