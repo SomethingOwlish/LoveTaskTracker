@@ -7,6 +7,7 @@ import {
   subscribeMoods, subscribeMoodLegends, subscribeMurmur, subscribeUserState, saveUserState,
 } from './lib/db';
 import { Toasts, OfflineBar } from './components/Toasts';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { dayKey } from './lib/util';
 import { projectsOf, allTags, tsMs } from './lib/util';
 import { Avatar } from './components/Avatar';
@@ -268,6 +269,7 @@ export default function App() {
       </div>
 
       <main className="screen" key={tab}>
+        <ErrorBoundary key={tab}>
         <Suspense fallback={<div className="empty"><i className="fa-solid fa-spinner fa-spin" /></div>}>
         {tab === 'tasks' && (
           <TasksView tasks={tasks} me={me} users={users} userOf={userOf} onOpen={setModal} projectColors={projectColors}
@@ -284,6 +286,7 @@ export default function App() {
           />
         )}
         </Suspense>
+        </ErrorBoundary>
       </main>
 
       {tab === 'tasks' && (
