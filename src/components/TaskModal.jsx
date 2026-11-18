@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import { reportError } from '../lib/toast';
 import { Avatar } from './Avatar';
 import { Sheet, Switch } from './Sheet';
+import { completeWithUndo, deleteWithUndo } from '../lib/actions';
 import { toDate, toLocalInput, fmtDateTime } from '../lib/util';
 import {
-  createTask, updateTask, deleteTask, completeTask, reopenTask,
+  createTask, updateTask, reopenTask,
   approveTask, returnTask, addComment, subscribeComments,
 } from '../lib/db';
 
@@ -139,7 +141,9 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
   // Пишем в Firestore без ожидания ответа: с локальным кэшем изменения видны
   // сразу, а без сети промис висел бы до синхронизации и шторка не закрывалась.
   const act = (promise) => {
-    Promise.resolve(promise).catch((e) => alert('Не сохранилось: ' + e.message));
+    Promise.resolve(promise)
+      .then((r) => r?.done?.catch((e) => reportError(e, 'Не сохранилось')))
+      .catch((e) => reportError(e, 'Не сохранилось'));
     onClose();
   };
 
@@ -159,7 +163,7 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
       act(createTask(payload));
     }
     } catch (e) {
-      alert('Не сохранилось: ' + e.message);
+      reportError(e, 'Не сохранилось');
       setBusy(false);
     }
   };
@@ -322,9 +326,9 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
           <div className="row" style={{ marginTop: 16 }}>
             {(task.status === 'done' || task.status === 'approved')
               ? <button className="btn" onClick={() => act(reopenTask(task))}>Вернуть в работу</button>
-              : <button className="btn" onClick={() => act(completeTask(task))}>Выполнено</button>}
+              : <button className="btn" onClick={() => { completeWithUndo(task); onClose(); }}>Выполнено</button>}
             <button className="btn btn-ghost" style={{ flex: 'none', color: 'var(--bad)' }}
-              onClick={() => { if (confirm('Удалить задачу?')) act(deleteTask(task.id)); }}>
+              onClick={() => { deleteWithUndo(task); onClose(); }}>
               Удалить
             </button>
           </div>
