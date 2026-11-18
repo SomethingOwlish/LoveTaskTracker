@@ -26,7 +26,28 @@ const ACCENTS = {
     { name: 'Электрик', c: '#8a6bff' },
     { name: 'Янтарь', c: '#ffae00' },
   ],
+  rowan: [
+    { name: 'Рябина', c: '#d0342c' },
+    { name: 'Клюква', c: '#941d1d' },
+    { name: 'Аква', c: '#93d4d8' },
+    { name: 'После грозы', c: '#4f8d95' },
+    { name: 'Ржавчина', c: '#c86a3a' },
+  ],
+  dusk: [
+    { name: 'Сирень', c: '#8350c4' },
+    { name: 'Бледное небо', c: '#c9e0eb' },
+    { name: 'Деним', c: '#7392b5' },
+    { name: 'Аметист', c: '#b48ae6' },
+    { name: 'Роза', c: '#d68ab0' },
+  ],
 };
+
+const THEMES = [
+  { id: 'academia', name: 'Дарк-академия', dots: ['#2c2420', '#463a33', '#d99873', '#ece3d6'] },
+  { id: 'cyberpunk', name: 'Киберпанк', dots: ['#06060c', '#161630', '#00f2ff', '#ff2bd6'] },
+  { id: 'rowan', name: 'Рябина', dots: ['#0b2224', '#336269', '#93d4d8', '#941d1d'] },
+  { id: 'dusk', name: 'Сумерки', dots: ['#262423', '#402b47', '#8350c4', '#c9e0eb'] },
+];
 
 function statsFor(tasks, uid) {
   const today = startOfToday();
@@ -89,8 +110,12 @@ export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAcce
 
           <div className="section-title">Тема</div>
           <div className="theme-pick">
-            <div className={`opt ${theme === 'academia' ? 'on' : ''}`} onClick={() => setTheme('academia')}>Дарк-академия</div>
-            <div className={`opt ${theme === 'cyberpunk' ? 'on' : ''}`} onClick={() => setTheme('cyberpunk')}>Киберпанк</div>
+            {THEMES.map((t) => (
+              <button key={t.id} type="button" className={`opt ${theme === t.id ? 'on' : ''}`} onClick={() => setTheme(t.id)}>
+                <span className="dots">{t.dots.map((c) => <i key={c} style={{ background: c }} />)}</span>
+                {t.name}
+              </button>
+            ))}
           </div>
 
           <div className="section-title">Акцент</div>

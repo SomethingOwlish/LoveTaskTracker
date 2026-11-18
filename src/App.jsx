@@ -20,6 +20,7 @@ import { murmurAwaitingMe } from './lib/murmurUtil';
 const CalendarView = lazy(() => import('./components/CalendarView').then((m) => ({ default: m.CalendarView })));
 const ProfileView = lazy(() => import('./components/ProfileView').then((m) => ({ default: m.ProfileView })));
 const MurmurView = lazy(() => import('./components/MurmurView').then((m) => ({ default: m.MurmurView })));
+const GameView = lazy(() => import('./components/GameView').then((m) => ({ default: m.GameView })));
 const BudgetView = lazy(() => import('./components/BudgetView').then((m) => ({ default: m.BudgetView })));
 import { loadPref, savePref } from './components/Sheet';
 
@@ -35,10 +36,23 @@ const TABS = [
   ['calendar', 'fa-regular fa-calendar', 'Календарь'],
   ['murmur', 'fa-solid fa-film', 'Мурмур'],
   ['budget', 'fa-solid fa-wallet', 'Бюджет'],
+  ['game', 'fa-solid fa-paw', 'Игра'],
   ['profile', 'fa-regular fa-user', 'Профиль'],
 ];
 
-const DEFAULT_ACCENT = { academia: '#d99873', cyberpunk: '#00f2ff' };
+const DEFAULT_ACCENT = { academia: '#d99873', cyberpunk: '#00f2ff', rowan: '#d0342c', dusk: '#8350c4' };
+const THEMES = Object.keys(DEFAULT_ACCENT);
+
+// Светлый ли цвет: на светлом акценте текст тёмный, на тёмном — светлый.
+function isLight(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return true;
+  const n = parseInt(m[1], 16);
+  const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const L = 0.2126 * lin(n >> 16) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  // порог, при котором контраст с белым и с почти-чёрным одинаков
+  return L > 0.18;
+}
 
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined = грузится, null = нет
@@ -61,7 +75,8 @@ export default function App() {
   const [viewedFrom, setViewedFrom] = useState(0); // снимок для подсветки в открытом списке
 
   // тема и акцент. Акцент храним отдельно для каждой темы — поддерживает свой цвет.
-  const initialTheme = localStorage.getItem('theme') || 'academia';
+  const savedTheme = localStorage.getItem('theme');
+  const initialTheme = THEMES.includes(savedTheme) ? savedTheme : 'academia';
   const [theme, setThemeState] = useState(initialTheme);
   const [accent, setAccent] = useState(() => localStorage.getItem('accent:' + initialTheme) || DEFAULT_ACCENT[initialTheme]);
 
@@ -73,10 +88,15 @@ export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
+    // цвет строки состояния на телефоне — под фон темы
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bg);
   }, [theme]);
 
   useEffect(() => {
-    document.documentElement.style.setProperty('--accent', accent);
+    const root = document.documentElement.style;
+    root.setProperty('--accent', accent);
+    root.setProperty('--accent-ink', isLight(accent) ? 'var(--ink-dark)' : 'var(--ink-light)');
     localStorage.setItem('accent:' + theme, accent);
   }, [theme, accent]);
 
@@ -102,6 +122,7 @@ export default function App() {
       import('./components/ProfileView');
       import('./components/MurmurView');
       import('./components/BudgetView');
+      import('./components/GameView');
     });
   }, [user]);
 
@@ -278,6 +299,7 @@ export default function App() {
         {tab === 'calendar' && <CalendarView tasks={tasks} me={me} users={users} moods={moods} moodLegends={moodLegends} onOpen={setModal} />}
         {tab === 'murmur' && <MurmurView items={murmur} me={me} users={users} userOf={userOf} />}
         {tab === 'budget' && <BudgetView me={me} userOf={userOf} />}
+        {tab === 'game' && <GameView tasks={tasks} me={me} users={users} />}
         {tab === 'profile' && (
           <ProfileView
             tasks={tasks} me={me} users={users}

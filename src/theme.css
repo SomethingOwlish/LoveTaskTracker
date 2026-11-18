@@ -1,5 +1,5 @@
 /* ============================================================
-   ТЕМЫ. Две полноценные палитры-скина.
+   ТЕМЫ. Четыре палитры-скина.
    Базовый набор переменных задаёт скин ([data-theme=...]),
    акцентный цвет (--accent) переопределяется отдельно из App
    (переключатель цвета в профиле).
@@ -11,6 +11,8 @@
   --maxw: 520px;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
+  /* текст на акценте: App выбирает светлый или тёмный по яркости акцента */
+  --accent-ink: var(--ink-dark);
 }
 
 /* --------- ДАРК-АКАДЕМИЯ (по умолчанию) --------- */
@@ -24,7 +26,8 @@
   --text: #ece3d6;
   --text-dim: #b6a591;
   --accent: #d99873;
-  --accent-ink: #2a1f18;
+  --ink-dark: #2a1f18;
+  --ink-light: #fff6ee;
   --good: #8aa46a;
   --warn: #d8a657;
   --bad: #c46a5a;
@@ -45,7 +48,8 @@
   --text: #e9f7ff;
   --text-dim: #7d90a8;
   --accent: #00f2ff;
-  --accent-ink: #03121a;
+  --ink-dark: #03121a;
+  --ink-light: #ffffff;
   --good: #39ff8a;
   --warn: #ffc24d;
   --bad: #ff5c8a;
@@ -57,4 +61,64 @@
     radial-gradient(140% 100% at 50% -10%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 55%);
   --radius: 10px;
   --radius-sm: 7px;
+}
+
+/* --------- РЯБИНА: тёмный тил, туман и красные ягоды ---------
+   Black Feather #0B2224 · After the Storm #336269 · Aqua Bloom #93D4D8 · Socialist #941D1D */
+[data-theme='rowan'] {
+  --bg: #0b2224;
+  --bg-2: #081a1c;
+  --surface: #12302f;
+  --surface-2: #1b3e40;
+  --border: rgba(147, 212, 216, 0.16);
+  --text: #dff1f2;
+  --text-dim: #8fb5b8;
+  --accent: #d0342c;
+  --ink-dark: #0b2224;
+  --ink-light: #fff2ef;
+  --good: #7fc6a4;
+  --warn: #e3a857;
+  --bad: #e0584f;
+  --font-display: 'Montserrat', system-ui, sans-serif;
+  --font-body: 'Montserrat', system-ui, sans-serif;
+  --font-mono: ui-monospace, monospace;
+  --glow: none;
+  --shadow: 0 12px 32px rgba(0, 10, 12, 0.5);
+  --texture:
+    radial-gradient(60% 45% at 85% 8%, rgba(147, 212, 216, 0.13), transparent 70%),
+    radial-gradient(40% 30% at 10% 30%, rgba(148, 29, 29, 0.16), transparent 70%),
+    radial-gradient(50% 40% at 90% 85%, rgba(148, 29, 29, 0.10), transparent 70%),
+    linear-gradient(180deg, #0f2d30 0%, #0b2224 45%);
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
+/* --------- СУМЕРКИ: сиреневый, денимовый туман и искры ---------
+   Pale Sky #C9E0EB · Dusty Denim #7392B5 · Deep Lilac #8350C4 · Midnight Violet #402B47 · Shadow Grey #262423 */
+[data-theme='dusk'] {
+  --bg: #262423;
+  --bg-2: #1d1b1b;
+  --surface: #33283a;
+  --surface-2: #402b47;
+  --border: rgba(201, 224, 235, 0.14);
+  --text: #e6f0f5;
+  --text-dim: #9fb2c8;
+  --accent: #8350c4;
+  --ink-dark: #241a2a;
+  --ink-light: #f6f0ff;
+  --good: #8fc9a8;
+  --warn: #e0b86a;
+  --bad: #e07a92;
+  --font-display: 'DM Serif Display', Georgia, serif;
+  --font-body: 'Nunito Sans', system-ui, sans-serif;
+  --font-mono: ui-monospace, monospace;
+  --glow: 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent);
+  --shadow: 0 12px 34px rgba(15, 8, 20, 0.5);
+  --texture:
+    radial-gradient(70% 50% at 50% -5%, rgba(115, 146, 181, 0.32), transparent 70%),
+    radial-gradient(45% 40% at 100% 40%, rgba(131, 80, 196, 0.26), transparent 70%),
+    radial-gradient(50% 45% at 0% 95%, rgba(64, 43, 71, 0.9), transparent 70%),
+    linear-gradient(180deg, #2c2a33 0%, #262423 55%);
+  --radius: 16px;
+  --radius-sm: 11px;
 }
