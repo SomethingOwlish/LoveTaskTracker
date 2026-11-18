@@ -2,7 +2,8 @@ import { Avatar } from './Avatar';
 import { toDate, fmtDate, quadrant, isClosed, startOfToday, isSameDay } from '../lib/util';
 import { RECURRENCE_LABEL } from '../lib/recurrence';
 import { reopenTask, toggleLike } from '../lib/db';
-import { completeWithUndo } from '../lib/actions';
+import { completeWithUndo, deleteWithUndo } from '../lib/actions';
+import { useSwipe, TRIGGER } from '../lib/useSwipe';
 import { reportError } from '../lib/toast';
 
 export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact = false }) {
@@ -32,8 +33,25 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact
     return completeWithUndo(task);
   };
 
+  // свайп вправо — выполнено (или вернуть), влево — удалить; у обоих есть «Отменить»
+  const { dx, handlers } = useSwipe({
+    onRight: task.status === 'in_review' ? null : () => (closed ? reopenTask(task).catch((e) => reportError(e)) : completeWithUndo(task)),
+    onLeft: () => deleteWithUndo(task),
+  });
+  const armed = Math.abs(dx) >= TRIGGER;
+
   return (
-    <div className={`task ${closed ? 'done' : ''} ${compact ? 'compact' : ''}`} style={{ borderLeftColor: stripe }} onClick={() => onOpen(task)}>
+    <div className={`swipe-wrap ${dx > 0 ? 'to-right' : dx < 0 ? 'to-left' : ''} ${armed ? 'armed' : ''}`}>
+      {dx !== 0 && (
+        <div className="swipe-bg" aria-hidden="true">
+          <span className="swipe-done"><i className={`fa-solid ${closed ? 'fa-rotate-left' : 'fa-check'}`} /> {closed ? 'Вернуть' : 'Готово'}</span>
+          <span className="swipe-del">Удалить <i className="fa-solid fa-trash" /></span>
+        </div>
+      )}
+    <div className={`task ${closed ? 'done' : ''} ${compact ? 'compact' : ''} ${dx ? 'dragging' : ''}`}
+      style={{ borderLeftColor: stripe, transform: dx ? `translateX(${dx}px)` : undefined }}
+      {...handlers}
+      onClick={() => onOpen(task)}>
       <div className="task-top">
         <button
           className={`check ${closed ? 'on' : ''}`}
@@ -88,6 +106,7 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact
           liked && <span className="like on" aria-label="Партнёру нравится">♥</span>
         )}
       </div>}
+    </div>
     </div>
   );
 }

@@ -1,10 +1,9 @@
 import { initializeApp } from 'firebase/app';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { FIREBASE_PROJECT } from './firebaseConfig';
 
-// Конфиг из уже настроенного проекта tasktrackergando.
-// Эти ключи публичны по дизайну Firebase — защита делается правилами Firestore
-// (см. firestore.rules), а не сокрытием ключа.
+// Конфиг проекта — в firebaseConfig.js (его же использует расширение Chrome).
 // Вход через Google идёт через страницу /__/auth/handler. На Cloudflare воркер
 // проксирует её с нашего же домена (см. worker/index.js) — так вход не ломается
 // в Safari/PWA на iPhone. Локально и на старом github.io — напрямую через firebaseapp.com.
@@ -12,12 +11,8 @@ const host = typeof location !== 'undefined' ? location.hostname : '';
 const proxiedAuth = host && !['localhost', '127.0.0.1'].includes(host) && !host.endsWith('github.io');
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyAY0qWBJI0QWJv68PVTlG8YFa_anXuQSZg',
-  authDomain: proxiedAuth ? location.host : 'tasktrackergando.firebaseapp.com',
-  projectId: 'tasktrackergando',
-  storageBucket: 'tasktrackergando.firebasestorage.app',
-  messagingSenderId: '829759743503',
-  appId: '1:829759743503:web:903d54f812bce3270b657a',
+  ...FIREBASE_PROJECT,
+  authDomain: proxiedAuth ? location.host : FIREBASE_PROJECT.authDomain,
 };
 
 const app = initializeApp(firebaseConfig);
