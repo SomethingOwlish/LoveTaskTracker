@@ -351,11 +351,12 @@ export function subscribeMurmur(cb) {
 export function subscribeMurmurDone(cb) {
   return listen(query(murmurCol, where('status', '==', 'done')), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
-export async function addMurmur({ kind, title, note = '', link = '', uid }) {
+export async function addMurmur({ kind, title, note = '', link = '', uid, media = null }) {
   const t = title.trim();
   if (!t) return;
   return addDoc(murmurCol, {
     kind, title: t, note, link: link || null,
+    ...(media || {}),
     addedBy: uid, wantedBy: [uid],
     status: 'want', ratings: {}, reviews: {},
     createdAt: serverTimestamp(), doneAt: null, doneBy: null,
