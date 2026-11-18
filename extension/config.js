@@ -8,7 +8,7 @@ export const APP_URL = 'https://lovetasktracker.argentummortis.workers.dev';
 // «Web SDK configuration» → Web client ID. В Google Cloud у этого клиента в
 // «Authorized redirect URIs» должен быть адрес из REDIRECT_URI ниже.
 // Подробно — extension/README.md.
-export const OAUTH_CLIENT_ID = '';
+export const OAUTH_CLIENT_ID = '829759743503-4i7mtbp24s16v2fobslsibrlafrch08n.apps.googleusercontent.com';
 
 // Публичный ключ закрепляет ID расширения (ihpjoimhbgfkbcfkpcnadjnkeffckcbi),
 // поэтому адрес возврата после входа не меняется при установке «распакованным».
