@@ -374,6 +374,10 @@ export async function unwatchMurmur(item) {
 export function subscribeUserState(uid, cb) {
   return onSnapshot(doc(db, 'userState', uid), { includeMetadataChanges: true }, (s) => cb(s.data() || {}, !s.metadata.fromCache), (e) => reportError(e));
 }
+// Ран игры заменяется целиком: merge склеил бы старые бои с новыми.
+export function saveGame(uid, game) {
+  return setDoc(doc(db, 'userState', uid), { game }, { mergeFields: ['game'] });
+}
 export function saveUserState(uid, patch) {
   return setDoc(doc(db, 'userState', uid), patch, { merge: true });
 }
