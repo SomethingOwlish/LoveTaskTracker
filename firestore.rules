@@ -86,14 +86,28 @@ service cloud.firestore {
         && request.resource.data.amount is number
         && request.resource.data.amount > 0
         && request.resource.data.amount < 100000000
-        && request.resource.data.planned is bool;
+        && request.resource.data.planned is bool
+        && optNumber(request.resource.data, 'fee')
+        && (!request.resource.data.keys().hasAny(['fee']) || request.resource.data.fee >= 0);
+    }
+    match /budgetRecurring/{id} {
+      allow read, delete: if allowed();
+      allow create, update: if allowed()
+        && request.resource.data.every in ['month', 'week']
+        && request.resource.data.nextDate is string
+        && request.resource.data.template.amount is number;
+    }
+    match /budgetSettings/{id} {
+      allow read, write: if allowed();
+    }
+    // кэш курсов валют (пишет любой из двоих раз в 12 часов)
+    match /fx/{id} {
+      allow read, write: if allowed();
     }
     match /budgetProjects/{id} {
       allow read, delete: if allowed();
       allow create, update: if allowed()
-        && shortText(request.resource.data.name, 200)
-        && optNumber(request.resource.data, 'income')
-        && optNumber(request.resource.data, 'expense');
+        && shortText(request.resource.data.name, 200);
     }
     match /receipts/{id} {
       allow read, write: if allowed();

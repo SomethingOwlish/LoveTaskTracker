@@ -21,3 +21,32 @@ describe('parseFiscalQr', () => {
     expect(parseFiscalQr(null)).toBeNull();
   });
 });
+
+describe('сербский QR (suf.purs.gov.rs)', () => {
+  // Собираем vl по описанной структуре: сумма 1543,20 дин., время 2026-11-15 18:32 UTC
+  const make = (amount, ts, tsLittle = false) => {
+    const b = new Uint8Array(60);
+    const v = new DataView(b.buffer);
+    v.setUint8(0, 3);
+    b.set(new TextEncoder().encode('ABCD1234'), 1);
+    b.set(new TextEncoder().encode('ABCD1234'), 9);
+    v.setUint32(17, 100, true); v.setUint32(21, 90, true);
+    v.setBigUint64(25, BigInt(Math.round(amount * 10000)), true);
+    v.setBigUint64(33, BigInt(ts), tsLittle);
+    const vl = btoa(String.fromCharCode(...b));
+    return `https://suf.purs.gov.rs/v/?vl=${encodeURIComponent(vl)}`;
+  };
+  const ts = Date.UTC(2026, 10, 15, 18, 32);
+  it('читает сумму в динарах и время', () => {
+    const r = parseFiscalQr(make(1543.2, ts));
+    expect(r.sum).toBe(1543.2);
+    expect(r.currency).toBe('RSD');
+    expect(new Date(r.date).getTime()).toBe(ts);
+  });
+  it('время в обратном порядке байт тоже понимает', () => {
+    expect(new Date(parseFiscalQr(make(99, ts, true)).date).getTime()).toBe(ts);
+  });
+  it('мусор вместо vl → null', () => {
+    expect(parseFiscalQr('https://suf.purs.gov.rs/v/?vl=abc')).toBeNull();
+  });
+});
