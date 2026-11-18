@@ -715,6 +715,11 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
   border-bottom: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); font-size: 13px;
 }
 
+/* ---------- Push-настройки ---------- */
+.push-card { display: flex; flex-direction: column; gap: 12px; }
+.push-prefs { display: flex; flex-direction: column; gap: 10px; }
+.push-time { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 8px; align-items: center; }
+.push-time .input { padding: 8px; }
 /* ---------- Бюджет: валюты, комиссии, лимиты, график ---------- */
 .fee-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 .cat-track { position: relative; }
