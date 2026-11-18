@@ -152,3 +152,21 @@ kbd { font: 11px ui-monospace, monospace; opacity: 0.65; }
 }
 .done p { margin: 6px 0 12px; overflow-wrap: anywhere; }
 .done .actions { display: flex; gap: 6px; justify-content: center; }
+
+/* ---------- вкладки Мурмур / Задача ---------- */
+.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; margin-bottom: 10px; background: var(--surface); border-radius: var(--radius-sm); }
+.tabs button {
+  border: 0; border-radius: calc(var(--radius-sm) - 2px); padding: 5px 8px;
+  background: transparent; color: var(--text-dim); font: inherit; font-size: 14px; cursor: pointer;
+}
+.tabs button[aria-selected='true'] { background: var(--surface-2); color: var(--text); box-shadow: var(--glow); }
+
+/* ---------- карточка фильма / игры ---------- */
+.media { display: flex; gap: 10px; margin-bottom: 8px; }
+.poster { width: 72px; height: 104px; flex: none; object-fit: cover; border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--border); }
+.poster.empty { display: grid; place-items: center; font-size: 26px; }
+.media-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.kinds .seg-btn { padding: 3px 4px; font-size: 13px; }
+.small { font-size: 12px; }
+.dupe { font-size: 13px; margin: 8px 0 0; padding: 6px 9px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--text); }
+#m-save { width: 100%; margin-top: 12px; }

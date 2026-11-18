@@ -143,11 +143,16 @@ function MurmurCard({ item, me, partner, userOf, K, onRate, onEdit }) {
 
   return (
     <div className={`task murmur ${done ? 'is-done' : ''}`} onClick={onEdit}>
-      <div className="task-top">
-        <h3>{item.title}</h3>
-        {done && avg != null && <span className="score big">{avg.toFixed(avg % 1 ? 1 : 0)}</span>}
+      <div className="murmur-head">
+        {item.poster && <img className="murmur-poster" src={item.poster} alt="" loading="lazy" referrerPolicy="no-referrer" />}
+        <div className="murmur-main">
+          <div className="task-top">
+            <h3>{item.title}{item.year ? <span className="murmur-year"> {item.year}</span> : null}</h3>
+            {done && avg != null && <span className="score big">{avg.toFixed(avg % 1 ? 1 : 0)}</span>}
+          </div>
+          {item.note && <p className="desc">{item.note}</p>}
+        </div>
       </div>
-      {item.note && <p className="desc">{item.note}</p>}
 
       {!done ? (
         <div className="task-foot">

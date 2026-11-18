@@ -713,3 +713,9 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
   background: color-mix(in srgb, var(--warn) 18%, var(--surface)); color: var(--text);
   border-bottom: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); font-size: 13px;
 }
+
+/* Мурмур: постер и год (их проставляет расширение Chrome) */
+.murmur-head { display: flex; gap: 12px; align-items: flex-start; }
+.murmur-main { flex: 1; min-width: 0; }
+.murmur-poster { width: 48px; height: 70px; flex: none; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); }
+.murmur-year { color: var(--text-dim); font-weight: 400; font-size: 0.85em; }
