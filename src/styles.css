@@ -74,6 +74,19 @@ a { color: var(--accent); }
 .brand .sub { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.18em; }
 
 [data-theme='cyberpunk'] .brand h1 { text-shadow: var(--glow); }
+/* сумерки: четырёхлучевая искра у названия, как на палитре */
+[data-theme='dusk'] .brand h1 { font-weight: 400; letter-spacing: 0.01em; }
+[data-theme='dusk'] .brand h1::after {
+  content: '✦'; margin-left: 6px; font-size: 0.8em; color: var(--accent);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+[data-theme='dusk'] .card { box-shadow: inset 0 1px 0 rgba(201, 224, 235, 0.06); }
+/* рябина: плотный гротеск, ягодная точка у названия */
+[data-theme='rowan'] .brand h1 { font-weight: 800; letter-spacing: -0.02em; }
+[data-theme='rowan'] .brand h1::after {
+  content: ''; display: inline-block; width: 7px; height: 7px; margin-left: 5px; border-radius: 50%;
+  background: var(--accent); box-shadow: 9px -3px 0 -1px color-mix(in srgb, var(--accent) 75%, #000);
+}
 
 /* ---------- Нижняя навигация ---------- */
 .nav {
@@ -432,8 +445,15 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 .stat .n { font-family: var(--font-display); font-size: 30px; font-weight: 900; color: var(--accent); }
 .stat .l { font-size: 10.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px; }
 
-.theme-pick { display: flex; gap: 10px; }
-.theme-pick .opt { flex: 1; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; text-align: center; font-weight: 700; }
+.theme-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.theme-pick .opt {
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 12px;
+  background: var(--surface); color: var(--text); font-weight: 700; font-size: 14px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.theme-pick .dots { display: flex; }
+.theme-pick .dots i { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--surface); margin-left: -5px; }
+.theme-pick .dots i:first-child { margin-left: 0; }
 .theme-pick .opt.on { border-color: var(--accent); box-shadow: var(--ring); }
 .swatches { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .swatch { width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--border); cursor: pointer; }
