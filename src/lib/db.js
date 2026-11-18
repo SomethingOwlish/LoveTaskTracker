@@ -5,6 +5,7 @@ import {
 } from 'firebase/firestore';
 import { nextFutureRecurrence } from './recurrence';
 import { tsMs } from './util';
+import { buildTaskDoc, assignedNotification } from './taskDoc';
 import { reportError } from './toast';
 
 // onSnapshot с понятной ошибкой вместо молча пустого экрана
@@ -88,33 +89,11 @@ export function subscribeComments(taskId, cb) {
 
 /* ---------------- Задачи ---------------- */
 export async function createTask(data) {
-  const title = data.title?.trim() || 'Без названия';
-  const assigneeUid = data.assigneeUid || data.authorUid;
-  const ref = await addDoc(tasksCol, {
-    title,
-    description: data.description || '',
-    authorUid: data.authorUid,
-    assigneeUid,
-    status: 'open',
-    needsReview: !!data.needsReview,
-    priorityMatrix: { importance: data.importance ?? 0, urgency: data.urgency ?? 0 },
-    deadline: data.deadline ? Timestamp.fromDate(new Date(data.deadline)) : null,
-    estimateMin: data.estimateMin ?? null,
-    actualMin: data.actualMin ?? null,
-    tags: data.tags || [],
-    projectTags: data.projectTags || [],
-    link: data.link || null,
-    checklist: data.checklist || [],
-    recurrence: data.recurrence || 'none',
-    likes: [],
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    completedAt: null,
-  });
+  const task = buildTaskDoc(data, { serverTimestamp, Timestamp });
+  const ref = await addDoc(tasksCol, task);
   // задачу поставил другой — уведомляем исполнителя
-  if (assigneeUid && assigneeUid !== data.authorUid) {
-    await addNotification({ type: 'assigned', taskId: ref.id, taskTitle: title, actorUid: data.authorUid, recipientUid: assigneeUid });
-  }
+  const n = assignedNotification(ref.id, task);
+  if (n) await addNotification(n);
   return ref;
 }
 
