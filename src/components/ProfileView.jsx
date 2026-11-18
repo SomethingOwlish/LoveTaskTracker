@@ -3,6 +3,7 @@ import { Avatar } from './Avatar';
 import { startOfToday, startOfWeek, toDate, isActive, isClosed, projectsOf } from '../lib/util';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
+import { PushSettings } from './PushSettings';
 
 export const PROJECT_PALETTE = [
   '#d99873', '#c9a24b', '#a4453f', '#85925a', '#bd9a63',
@@ -49,7 +50,7 @@ function statsFor(tasks, uid) {
   return { open, doneToday, doneWeek };
 }
 
-export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAccent, projectColors, setProjectColor }) {
+export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAccent, projectColors, setProjectColor, pushPrefs }) {
   const [view, setView] = useState(me.uid); // чьи смотрим
   const who = users.find((u) => u.uid === view) || me;
   const s = statsFor(tasks, view);
@@ -83,6 +84,9 @@ export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAcce
 
       {view === me.uid && (
         <>
+          <div className="section-title">Уведомления на телефон</div>
+          <PushSettings me={me} prefs={pushPrefs} />
+
           <div className="section-title">Тема</div>
           <div className="theme-pick">
             <div className={`opt ${theme === 'academia' ? 'on' : ''}`} onClick={() => setTheme('academia')}>Дарк-академия</div>

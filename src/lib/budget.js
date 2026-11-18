@@ -5,7 +5,8 @@ import {
 } from 'firebase/firestore';
 import { USERS } from '../config';
 import { tsMs } from './util';
-import { effectDiff } from './budgetMath';
+import { effectDiff, nextOccurrence } from './budgetMath';
+import { DEFAULT_BASE } from './currency';
 import { reportError, toastError } from './toast';
 
 /* Модель:
@@ -32,9 +33,10 @@ export const DEFAULT_WALLETS = [
   { id: 'cash', name: 'Наличка', icon: 'fa-solid fa-money-bill-wave', color: '#85925a', order: 0 },
   { id: 'card', name: 'Карта', icon: 'fa-solid fa-credit-card', color: '#6aa0d8', order: 1 },
   { id: 'savings', name: 'Отложено', icon: 'fa-solid fa-piggy-bank', color: '#c9a24b', order: 2 },
-  { id: 'pocket_owl', name: 'Карманные Совы', icon: 'fa-solid fa-feather', color: '#d99873', order: 3, ownerUid: owlEmail },
-  { id: 'pocket_goose', name: 'Карманные Гуся', icon: 'fa-solid fa-dove', color: '#8a6bff', order: 4, ownerUid: gooseEmail },
 ];
+// Карманные деньги — не кошельки, а категории расходов с месячным лимитом.
+export const POCKET_CATS = { [owlEmail]: 'Карманные Совы', [gooseEmail]: 'Карманные Гуся' };
+const LEGACY_POCKET_WALLETS = ['pocket_owl', 'pocket_goose'];
 
 export const WALLET_ICONS = [
   'fa-solid fa-wallet', 'fa-solid fa-money-bill-wave', 'fa-solid fa-credit-card', 'fa-solid fa-piggy-bank',
@@ -53,6 +55,10 @@ export const EXPENSE_CATS = [
   { id: 'Подарки', icon: 'fa-solid fa-gift' },
   { id: 'Связь', icon: 'fa-solid fa-wifi' },
   { id: 'Питомцы', icon: 'fa-solid fa-paw' },
+  { id: 'Карманные Совы', icon: 'fa-solid fa-feather' },
+  { id: 'Карманные Гуся', icon: 'fa-solid fa-dove' },
+  { id: 'Комиссии', icon: 'fa-solid fa-percent' },
+  { id: 'Налоги', icon: 'fa-solid fa-landmark' },
   { id: 'Другое', icon: 'fa-solid fa-ellipsis' },
 ];
 export const INCOME_CATS = [
@@ -77,14 +83,30 @@ function sub(q, cb, sort) {
 }
 const byDateDesc = (a, b) => tsMs(b.date) - tsMs(a.date) || tsMs(b.createdAt) - tsMs(a.createdAt);
 
-export const subscribeWallets = (cb) => sub(walletsCol, (list, snap) => {
-  // первый запуск: кошельков нет на сервере — заводим стандартные.
-  // setDoc с фиксированными id идемпотентен, гонка двух телефонов не страшна.
-  if (!list.length && !snap.metadata.fromCache) {
-    DEFAULT_WALLETS.forEach(({ id, ...w }) => setDoc(doc(walletsCol, id), { ...w, balance: 0, archived: false }, { merge: true }));
+// includeMetadataChanges: при локальном кэше подтверждение сервера без изменений
+// данных приходит только как смена metadata.fromCache — без этого флага
+// разовые действия «после ответа сервера» (засев, прятанье) не срабатывали.
+let walletsChecked = false;
+export const subscribeWallets = (cb) => onSnapshot(walletsCol, { includeMetadataChanges: true }, (snap) => {
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  onWallets(list, snap, cb);
+}, (e) => reportError(e));
+const onWallets = (list, snap, cb) => {
+  // разовые действия — один раз за запуск, после первого ответа сервера
+  if (!snap.metadata.fromCache && !walletsChecked) {
+    walletsChecked = true;
+    // первый запуск: кошельков нет — заводим стандартные (id фиксированы, гонка не страшна)
+    if (!list.length) {
+      DEFAULT_WALLETS.forEach(({ id, ...w }) => setDoc(doc(walletsCol, id), { ...w, currency: DEFAULT_BASE, balance: 0, archived: false }, { merge: true }));
+    }
+    // бывшие кошельки «Карманные …» прячем, если в них ничего нет
+    list.forEach((w) => {
+      if (LEGACY_POCKET_WALLETS.includes(w.id) && !w.archived && !w.balance) updateDoc(doc(walletsCol, w.id), { archived: true }).catch(() => {});
+    });
   }
   cb(list);
-}, (a, b) => (a.order ?? 0) - (b.order ?? 0));
+};
 
 // Операции за месяц [from, to)
 export const subscribeTxRange = (from, to, cb) => sub(
@@ -110,6 +132,12 @@ function txData(d) {
   return {
     type: d.type,
     amount: Math.round(Number(d.amount) * 100) / 100,
+    currency: d.currency || DEFAULT_BASE,
+    fee: Math.round((Number(d.fee) || 0) * 100) / 100,
+    feeCategory: d.fee ? (d.feeCategory || 'Комиссии') : null,
+    toAmount: d.type === 'transfer' && d.toAmount != null && d.toAmount !== '' ? Math.round(Number(d.toAmount) * 100) / 100 : null,
+    toCurrency: d.type === 'transfer' ? d.toCurrency || null : null,
+    recurringId: d.recurringId || null,
     walletId: d.walletId || null,
     toWalletId: d.type === 'transfer' ? d.toWalletId || null : null,
     category: d.type === 'transfer' ? 'Перевод' : d.category || 'Другое',
@@ -130,11 +158,13 @@ function applyEffects(batch, next, prev, known) {
   Object.entries(wallets).forEach(([id, v]) => {
     if (known.wallets.has(id)) batch.update(doc(walletsCol, id), { balance: increment(v) });
   });
-  Object.entries(projects).forEach(([id, x]) => {
+  Object.entries(projects).forEach(([id, byCur]) => {
     const patch = {};
-    if (x.income) patch.income = increment(x.income);
-    if (x.expense) patch.expense = increment(x.expense);
-    if (known.projects.has(id)) batch.update(doc(projCol, id), patch);
+    Object.entries(byCur).forEach(([cur, x]) => {
+      if (x.income) patch[`totals.${cur}.income`] = increment(x.income);
+      if (x.expense) patch[`totals.${cur}.expense`] = increment(x.expense);
+    });
+    if (Object.keys(patch).length && known.projects.has(id)) batch.update(doc(projCol, id), patch);
   });
 }
 
@@ -173,7 +203,7 @@ export async function commitPlanned(tx, known) {
 /* ---------- Проекты ---------- */
 export const saveProject = (id, data) => (id
   ? updateDoc(doc(projCol, id), data)
-  : addDoc(projCol, { ...data, income: 0, expense: 0, archived: false, createdAt: serverTimestamp() }));
+  : addDoc(projCol, { ...data, totals: {}, archived: false, createdAt: serverTimestamp() }));
 export const deleteProject = (id) => deleteDoc(doc(projCol, id));
 
 /* ---------- Чеки ---------- */
@@ -201,4 +231,44 @@ export async function deleteReceipt(r) {
   return batch.commit();
 }
 
-export { walletBalances, inMonth, byCategory, totals } from './budgetMath';
+export { walletBalances, inMonth, byCategory, totals, projectTotals, FEE_CATEGORIES } from './budgetMath';
+
+/* ---------- Настройки бюджета ----------
+   budgetSettings/main = { baseCurrency, limits: { категория: сумма в основной валюте } } */
+const settingsRef = doc(db, 'budgetSettings', 'main');
+export const subscribeBudgetSettings = (cb) => onSnapshot(settingsRef, (s) => cb({ baseCurrency: DEFAULT_BASE, limits: {}, ...(s.data() || {}) }), (e) => reportError(e));
+export const saveBudgetSettings = (patch) => setDoc(settingsRef, patch, { merge: true });
+
+/* ---------- Регулярные платежи ----------
+   budgetRecurring/{id} = { шаблон операции…, every: 'month'|'week', day, nextDate: 'YYYY-MM-DD', active }
+   Каждое наступление превращается в запланированную операцию с id rec_{id}_{дата}:
+   id детерминированный, поэтому два телефона не создадут дубль. */
+const recCol = collection(db, 'budgetRecurring');
+export const subscribeRecurring = (cb) => sub(recCol, cb, (a, b) => (a.nextDate || '').localeCompare(b.nextDate || ''));
+export const saveRecurring = (id, data) => (id ? updateDoc(doc(recCol, id), data) : addDoc(recCol, { ...data, active: true, createdAt: serverTimestamp() }));
+export const deleteRecurring = (id) => deleteDoc(doc(recCol, id));
+
+const keyToDate = (k) => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d, 12); };
+
+// Создать запланированные операции на ближайшие ~5 недель. Вызывается при
+// открытии бюджета; повторный вызов ничего не дублирует.
+export async function materializeRecurring(list, authorUid, horizonDays = 35) {
+  const horizon = new Date(Date.now() + horizonDays * 86400000);
+  for (const r of list) {
+    if (!r.active || !r.nextDate) continue;
+    let next = r.nextDate;
+    let guard = 0;
+    while (keyToDate(next) <= horizon && guard++ < 60) {
+      const ref = doc(txCol, `rec_${r.id}_${next}`);
+      const exists = await getDoc(ref).then((x) => x.exists()).catch(() => true);
+      if (!exists) {
+        await setDoc(ref, {
+          ...txData({ ...r.template, date: keyToDate(next), planned: true, recurringId: r.id }),
+          authorUid, createdAt: serverTimestamp(),
+        });
+      }
+      next = nextOccurrence(next, r.every, r.day);
+    }
+    if (next !== r.nextDate) await updateDoc(doc(recCol, r.id), { nextDate: next });
+  }
+}

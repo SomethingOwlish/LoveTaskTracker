@@ -119,6 +119,10 @@ describe('buildMurmurDoc', () => {
       createdAt: 'TS', doneAt: null, doneBy: null,
     });
   });
+  it('найденное поиском в приложении (media) дописывается в запись', () => {
+    const d = buildMurmurDoc({ kind: 'movie', title: 'Dune', uid: 'a@x', media: { poster: 'p.jpg', year: 2021, overview: 'Пески', extId: 438631 } }, ts);
+    expect(d).toMatchObject({ title: 'Dune', poster: 'p.jpg', year: 2021, overview: 'Пески', extId: 438631, wantedBy: ['a@x'] });
+  });
   it('пустое название — null', () => {
     expect(buildMurmurDoc({ kind: 'movie', title: '  ', uid: 'a@x' }, ts)).toBeNull();
   });

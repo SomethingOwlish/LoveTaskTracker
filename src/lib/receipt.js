@@ -34,15 +34,47 @@ function compress(img, maxSide, maxBytes) {
   return data;
 }
 
-// t=20241117T1530&s=1234.50&fn=...&i=...&fp=...&n=1
+// Сербский фискальный чек: QR = https://suf.purs.gov.rs/v/?vl=<base64>.
+// В vl упакованы: версия(1) · кто запросил(8) · кто подписал(8) · счётчики(4+4)
+// · сумма (8 байт, little-endian, в десятитысячных) · время (8 байт, мс).
+// Порядок байт времени в разных описаниях разный — пробуем оба и берём
+// правдоподобный (2019 год … завтра).
+export function parseSerbianQr(raw) {
+  if (!raw) return null;
+  let vl;
+  try {
+    const u = new URL(raw);
+    if (!/purs\.gov\.rs$/.test(u.hostname)) return null;
+    vl = u.searchParams.get('vl');
+  } catch { return null; }
+  if (!vl) return null;
+  let bytes;
+  try {
+    const b64 = vl.replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(b64 + '==='.slice((b64.length + 3) % 4));
+    bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  } catch { return null; }
+  if (bytes.length < 41) return null;
+  const view = new DataView(bytes.buffer);
+  const amount = Number(view.getBigUint64(25, true)) / 10000;
+  const min = Date.UTC(2019, 0, 1); const max = Date.now() + 86400000;
+  const candidates = [Number(view.getBigUint64(33, false)), Number(view.getBigUint64(33, true))];
+  const ts = candidates.find((t) => t >= min && t <= max);
+  if (!(amount > 0 && amount < 1e9) || !ts) return null;
+  return { sum: Math.round(amount * 100) / 100, date: new Date(ts).toISOString(), isReturn: false, currency: 'RSD', raw };
+}
+
+// Российский чек: t=20241117T1530&s=1234.50&fn=...&i=...&fp=...&n=1
 export function parseFiscalQr(raw) {
+  const rs = parseSerbianQr(raw);
+  if (rs) return rs;
   if (!raw || !/(^|&)t=/.test(raw) || !/(^|&)s=/.test(raw)) return null;
   const p = Object.fromEntries(raw.split('&').map((kv) => { const i = kv.indexOf('='); return [kv.slice(0, i), kv.slice(i + 1)]; }));
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/.exec(p.t || '');
   const sum = Number(String(p.s || '').replace(',', '.'));
   if (!m || !Number.isFinite(sum)) return null;
   const date = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
-  return { sum, date: date.toISOString(), isReturn: p.n === '2', raw };
+  return { sum, date: date.toISOString(), isReturn: p.n === '2', currency: 'RUB', raw };
 }
 
 async function findQr(img) {

@@ -8,14 +8,21 @@
 // на том же домене, что и приложение — это рекомендованный Firebase вариант
 // «reverse proxy» (см. firebase.google.com/docs/auth/web/redirect-best-practices).
 //
-// Воркер вызывается только для /__/* (run_worker_first в wrangler.jsonc),
+// Воркер вызывается только для /__/* и /api/* (run_worker_first в wrangler.jsonc),
 // все остальные запросы — бесплатная статика и в лимит воркеров не входят.
+
+import { handleMedia } from './media.js';
 
 const FIREBASE_HOST = 'tasktrackergando.firebaseapp.com';
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === '/api/media') {
+      try { return await handleMedia(request, env); } catch (e) {
+        return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 502, headers: { 'content-type': 'application/json' } });
+      }
+    }
     if (url.pathname.startsWith('/__/')) {
       const target = new URL(url.pathname + url.search, `https://${FIREBASE_HOST}`);
       const headers = new Headers(request.headers);

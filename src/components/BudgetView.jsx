@@ -7,13 +7,22 @@ import {
   subscribeReceipts, subscribeAllReceipts, fetchTx, fetchReceipt,
   saveWallet, saveTx, deleteTx, commitPlanned, saveProject, deleteProject,
   addReceipt, loadReceiptImage, deleteReceipt,
-  walletBalances, inMonth, byCategory, totals, catIcon,
-  EXPENSE_CATS, INCOME_CATS, WALLET_ICONS,
+  walletBalances, inMonth, byCategory, totals, projectTotals, catIcon,
+  subscribeBudgetSettings, saveBudgetSettings, subscribeRecurring, materializeRecurring,
+  EXPENSE_CATS, INCOME_CATS, WALLET_ICONS, FEE_CATEGORIES,
 } from '../lib/budget';
+import { subscribeRates } from '../lib/fx';
+import { CURRENCIES, CURRENCY_CODES, DEFAULT_BASE, fmtCur, curOf, convert } from '../lib/currency';
+import { RecurringList, LimitsSheet, MonthsChart } from './BudgetExtras';
 import { processReceiptPhoto } from '../lib/receipt';
-import { fmtMoney, parseMoney, monthTitle, toDate, dayKey, fmtDate, fmtWeekday, isSameDay, uid6 } from '../lib/util';
+import { parseMoney, monthTitle, toDate, dayKey, fmtDate, fmtWeekday, isSameDay, uid6 } from '../lib/util';
 
 const TYPE_LABEL = { expense: 'Расход', income: 'Доход', transfer: 'Перевод' };
+
+// Основная валюта сводок — задаётся в настройках бюджета; BudgetView обновляет
+// её при каждой отрисовке, чтобы не протаскивать через все компоненты.
+let BASE = DEFAULT_BASE;
+const fmtB = (v) => fmtCur(v, BASE);
 
 export function BudgetView({ me, userOf }) {
   const [wallets, setWallets] = useState([]);
@@ -21,10 +30,25 @@ export function BudgetView({ me, userOf }) {
   const [planned, setPlanned] = useState([]);
   const [projects, setProjects] = useState([]);
   const [receipts, setReceipts] = useState([]);
+  const [settings, setSettings] = useState({ baseCurrency: DEFAULT_BASE, limits: {} });
+  const [fx, setFx] = useState(null);
+  const [recurring, setRecurring] = useState([]);
   useEffect(() => {
-    const u = [subscribeWallets(setWallets), subscribePlanned(setPlanned), subscribeProjects(setProjects), subscribeReceipts(setReceipts)];
+    const u = [
+      subscribeWallets(setWallets), subscribePlanned(setPlanned), subscribeProjects(setProjects),
+      subscribeReceipts(setReceipts), subscribeBudgetSettings(setSettings), subscribeRates(setFx),
+      subscribeRecurring(setRecurring),
+    ];
     return () => u.forEach((f) => f());
   }, []);
+  BASE = settings.baseCurrency || DEFAULT_BASE;
+
+  // регулярные платежи → запланированные операции на ближайшие недели
+  const recKey = recurring.map((r) => r.id + r.nextDate + r.active).join('|');
+  useEffect(() => {
+    if (recurring.length) materializeRecurring(recurring, me.uid).catch((e) => reportError(e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recKey]);
 
   const [tab, setTabState] = useState(() => loadPref('budgetTab', 'overview'));
   const setTab = (t) => { setTabState(t); savePref('budgetTab', t); };
@@ -47,6 +71,7 @@ export function BudgetView({ me, userOf }) {
   const [walletSheet, setWalletSheet] = useState(null);
   const [showReceipts, setShowReceipts] = useState(false);
   const [projectOpen, setProjectOpen] = useState(null);
+  const [limitsOpen, setLimitsOpen] = useState(false);
 
   const activeWallets = wallets.filter((w) => !w.archived);
   const balances = useMemo(() => walletBalances(wallets), [wallets]);
@@ -55,6 +80,9 @@ export function BudgetView({ me, userOf }) {
 
   const ctx = {
     me, userOf, wallets, activeWallets, txs, projects, receipts, balances, month, setMonth, known,
+    base: BASE, fx, settings, recurring,
+    walletCur: (id) => curOf(wallets.find((w) => w.id === id), BASE),
+    openLimits: () => setLimitsOpen(true),
     openTx: (tx, initial) => setTxSheet({ tx, initial }),
     openWallet: setWalletSheet,
     openReceipts: () => setShowReceipts(true),
@@ -73,6 +101,7 @@ export function BudgetView({ me, userOf }) {
 
       {walletSheet && <WalletSheet ctx={ctx} wallet={walletSheet === 'new' ? null : walletSheet} onClose={() => setWalletSheet(null)} />}
       {showReceipts && <ReceiptsSheet ctx={ctx} onClose={() => setShowReceipts(false)} />}
+      {limitsOpen && <LimitsSheet ctx={ctx} onClose={() => setLimitsOpen(false)} save={saveBudgetSettings} cats={EXPENSE_CATS} />}
       {projectOpen && <ProjectSheet ctx={ctx} project={projectOpen === 'new' ? null : projects.find((p) => p.id === projectOpen.id) || projectOpen} onClose={() => setProjectOpen(null)} />}
       {/* операция — последней, чтобы открываться поверх кошелька/проекта */}
       {txSheet && <TxSheet ctx={ctx} tx={txSheet.tx} initial={txSheet.initial} onClose={() => setTxSheet(null)} />}
@@ -92,11 +121,12 @@ function MonthNav({ month, setMonth }) {
   );
 }
 
-function Money({ value, type, signed }) {
+function Money({ value, type, signed, cur }) {
   const cls = type === 'income' ? 'pos' : type === 'expense' ? 'neg' : '';
   const sign = signed ? (type === 'income' ? '+' : type === 'expense' ? '−' : '') : '';
-  return <span className={`money ${cls}`}>{sign}{fmtMoney(value)}</span>;
+  return <span className={`money ${cls}`}>{sign}{fmtCur(value, cur || BASE)}</span>;
 }
+export { Money, fmtB };
 
 function TxRow({ tx, ctx, showDate }) {
   const w = ctx.wallets.find((x) => x.id === tx.walletId);
@@ -114,10 +144,13 @@ function TxRow({ tx, ctx, showDate }) {
           {proj && <> · <span className="chip project tiny">{proj.name}</span></>}
           {showDate && d && <> · {fmtDate(d)}</>}
           {tx.items?.length ? <> · {tx.items.length} поз.</> : null}
+          {tx.fee ? <> · {tx.feeCategory === 'Налоги' ? 'налог' : 'комиссия'} {fmtCur(tx.fee, curOf(tx, BASE))}</> : null}
         </span>
       </span>
       <span className="tx-right">
-        <Money value={tx.amount} type={tx.type} signed />
+        {tx.type === 'transfer' && tx.toAmount != null && tx.toCurrency && tx.toCurrency !== curOf(tx, BASE)
+          ? <span className="money">{fmtCur(tx.amount, curOf(tx, BASE))} → {fmtCur(tx.toAmount, tx.toCurrency)}</span>
+          : <Money value={tx.amount} type={tx.type} signed cur={curOf(tx, BASE)} />}
         {author && <Avatar email={author.email} avatar={author.avatar} />}
       </span>
     </button>
@@ -184,7 +217,7 @@ function ReceiptCapture({ ctx, extra, onBusy, label = 'Чек' }) {
             <button className="btn btn-accent" onClick={() => { ctx.openTx(null, receiptInitial(done, extra)); setDone(null); }}>Разобрать сейчас</button>
           </>}>
           {done.qr
-            ? <p>Нашёл QR: <b>{fmtMoney(done.qr.sum)}</b>, {fmtDate(new Date(done.qr.date))}.</p>
+            ? <p>Нашёл QR: <b>{fmtCur(done.qr.sum, done.qr.currency || 'RUB')}</b>, {fmtDate(new Date(done.qr.date))}.</p>
             : <p className="hint">QR не распознался — сумму впишешь руками. Фото сохранено.</p>}
         </Sheet>
       )}
@@ -197,6 +230,7 @@ function receiptInitial(r, extra = {}) {
     type: r.qr?.isReturn ? 'income' : 'expense',
     category: r.qr?.isReturn ? 'Возврат' : undefined,
     amount: r.qr?.sum,
+    qrCurrency: r.qr?.currency,
     date: r.qr?.date ? new Date(r.qr.date) : undefined,
     receiptId: r.id,
     ...extra,
@@ -204,25 +238,34 @@ function receiptInitial(r, extra = {}) {
 }
 
 /* ---------- Обзор ---------- */
+// сумма запланированного в основной валюте
+const plannedSum = (list, type, fx) => list.filter((t) => t.type === type)
+  .reduce((s, t) => s + convert((Number(t.amount) || 0) + (type === 'expense' ? Number(t.fee) || 0 : -(Number(t.fee) || 0)), curOf(t, BASE), BASE, fx), 0);
+
 function Overview({ ctx, newReceipts }) {
-  const { activeWallets, balances, txs, month, setMonth } = ctx;
-  const total = activeWallets.reduce((s, w) => s + (balances[w.id] || 0), 0);
+  const { activeWallets, balances, txs, month, setMonth, fx } = ctx;
+  const total = activeWallets.reduce((s, w) => s + convert(balances[w.id] || 0, curOf(w, BASE), BASE, fx), 0);
+  const multiCur = new Set(activeWallets.map((w) => curOf(w, BASE))).size > 1;
   const monthTx = txs.filter((t) => inMonth(t, month));
-  const { income, expense } = totals(monthTx);
+  const { income, expense } = totals(monthTx, BASE, fx);
   const plannedLeft = monthTx.filter((t) => t.planned);
-  const planExp = plannedLeft.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-  const planInc = plannedLeft.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-  const cats = byCategory(monthTx);
-  const maxCat = cats[0]?.sum || 1;
+  const planExp = plannedSum(plannedLeft, 'expense', fx);
+  const planInc = plannedSum(plannedLeft, 'income', fx);
+  const cats = byCategory(monthTx, BASE, fx);
+  const limits = ctx.settings.limits || {};
+  // категории с лимитом показываем, даже если по ним ещё ничего не потрачено
+  Object.keys(limits).forEach((c) => { if (limits[c] && !cats.some((x) => x.cat === c)) cats.push({ cat: c, sum: 0 }); });
+  const maxCat = Math.max(1, ...cats.map((c) => Math.max(c.sum, limits[c.cat] || 0)));
+  const [chart, setChart] = useState(false);
 
   return (
     <div>
       <div className="card budget-hero">
-        <div className="l">Всего во всех кошельках</div>
-        <div className="n">{fmtMoney(total)}</div>
+        <div className="l">Всего во всех кошельках{multiCur ? ' (по курсу)' : ''}</div>
+        <div className="n">{multiCur ? '≈ ' : ''}{fmtB(total)}</div>
         {(planExp > 0 || planInc > 0) && (
           <div className="hint" style={{ margin: '4px 0 0' }}>
-            После плана на месяц: <b>{fmtMoney(total + planInc - planExp)}</b>
+            После плана на месяц: <b>{fmtB(total + planInc - planExp)}</b>
           </div>
         )}
       </div>
@@ -233,7 +276,7 @@ function Overview({ ctx, newReceipts }) {
           return (
             <button key={w.id} type="button" className="wallet" style={{ '--wc': w.color || 'var(--accent)' }} onClick={() => ctx.openWallet(w)}>
               <span className="wallet-name"><i className={w.icon || 'fa-solid fa-wallet'} /> {w.name}</span>
-              <span className={`wallet-bal ${(balances[w.id] || 0) < 0 ? 'neg' : ''}`}>{fmtMoney(balances[w.id] || 0)}</span>
+              <span className={`wallet-bal ${(balances[w.id] || 0) < 0 ? 'neg' : ''}`}>{fmtCur(balances[w.id] || 0, curOf(w, BASE))}</span>
               {owner && <span className="wallet-owner"><Avatar email={owner.email} avatar={owner.avatar} /></span>}
             </button>
           );
@@ -252,23 +295,35 @@ function Overview({ ctx, newReceipts }) {
 
       <MonthNav month={month} setMonth={setMonth} />
       <div className="stats money-stats">
-        <div className="stat"><div className="n pos">{fmtMoney(income)}</div><div className="l">Пришло</div></div>
-        <div className="stat"><div className="n neg">{fmtMoney(expense)}</div><div className="l">Ушло</div></div>
-        <div className="stat"><div className="n">{fmtMoney(planExp)}</div><div className="l">Ещё в плане</div></div>
+        <div className="stat"><div className="n pos">{fmtB(income)}</div><div className="l">Пришло</div></div>
+        <div className="stat"><div className="n neg">{fmtB(expense)}</div><div className="l">Ушло</div></div>
+        <div className="stat"><div className="n">{fmtB(planExp)}</div><div className="l">Ещё в плане</div></div>
       </div>
 
-      {cats.length > 0 ? (
-        <>
-          <div className="section-title">Куда ушло</div>
-          {cats.map((c) => (
-            <div key={c.cat} className="cat-bar">
-              <span className="cat-name"><i className={catIcon(c.cat, 'expense')} /> {c.cat}</span>
-              <span className="cat-track"><span style={{ width: `${(c.sum / maxCat) * 100}%` }} /></span>
-              <span className="cat-sum">{fmtMoney(c.sum)}</span>
-            </div>
-          ))}
-        </>
-      ) : <p className="empty">В этом месяце расходов пока нет.</p>}
+      <div className="row" style={{ alignItems: 'center' }}>
+        <div className="section-title" style={{ margin: '18px 0 10px' }}>Куда ушло</div>
+        <button className="btn btn-sm btn-ghost" style={{ flex: 'none' }} onClick={ctx.openLimits}><i className="fa-solid fa-sliders" /> Лимиты</button>
+      </div>
+      {cats.length > 0 ? cats.map((c) => {
+        const lim = limits[c.cat];
+        const over = lim && c.sum > lim;
+        return (
+          <div key={c.cat} className={`cat-bar ${over ? 'over' : ''}`}>
+            <span className="cat-name"><i className={catIcon(c.cat, 'expense')} /> {c.cat}</span>
+            <span className="cat-track">
+              <span style={{ width: `${(c.sum / maxCat) * 100}%` }} />
+              {lim ? <i className="cat-limit" style={{ left: `${(lim / maxCat) * 100}%` }} /> : null}
+            </span>
+            <span className="cat-sum">{fmtB(c.sum)}{lim ? <small> / {fmtB(lim)}</small> : null}</span>
+          </div>
+        );
+      }) : <p className="empty">В этом месяце расходов пока нет.</p>}
+
+      <div className="section-title">По месяцам</div>
+      {chart
+        ? <MonthsChart ctx={ctx} />
+        : <button className="btn btn-block" onClick={() => setChart(true)}><i className="fa-solid fa-chart-column" /> Показать последние полгода</button>}
+      {multiCur && <p className="hint">Сводки — в {CURRENCIES[BASE].label.toLowerCase()}ах по текущему курсу. Основную валюту можно сменить в «Лимитах».</p>}
     </div>
   );
 }
@@ -297,7 +352,7 @@ function Operations({ ctx }) {
   const [wallet, setWallet] = useState(null);
   const list = ctx.txs.filter((t) => !t.planned && inMonth(t, ctx.month) && (!wallet || t.walletId === wallet || t.toWalletId === wallet));
   const groups = groupByDay(list);
-  const { income, expense } = totals(list);
+  const { income, expense } = totals(list, BASE, ctx.fx);
   return (
     <div>
       <QuickActions ctx={ctx} />
@@ -329,13 +384,13 @@ function Plan({ ctx }) {
   const planned = ctx.txs.filter((t) => t.planned);
   const overdue = planned.filter((t) => toDate(t.date) < new Date(now.getFullYear(), now.getMonth(), now.getDate()));
   const inThisMonth = planned.filter((t) => inMonth(t, ctx.month) && !overdue.includes(t)).sort((a, b) => toDate(a.date) - toDate(b.date));
-  const exp = inThisMonth.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-  const inc = inThisMonth.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+  const exp = plannedSum(inThisMonth, 'expense', ctx.fx);
+  const inc = plannedSum(inThisMonth, 'income', ctx.fx);
 
   const row = (t) => (
     <div key={t.id} className="plan-row">
       <TxRow tx={t} ctx={ctx} showDate />
-      <button className="btn btn-sm btn-accent" onClick={() => commitPlanned(t, ctx.known)} title="Провести сегодняшним числом">
+      <button className="btn btn-sm btn-accent" onClick={() => commitPlanned(t, ctx.known).catch((e) => reportError(e))} title="Провести сегодняшним числом">
         <i className="fa-solid fa-check" /> Провести
       </button>
     </div>
@@ -354,6 +409,8 @@ function Plan({ ctx }) {
         <span style={{ textAlign: 'right' }}>Потратим <Money value={exp} type="expense" /></span>
       </div>
       {inThisMonth.length === 0 ? <p className="empty">На этот месяц ничего не запланировано.</p> : inThisMonth.map(row)}
+
+      <RecurringList ctx={ctx} />
     </div>
   );
 }
@@ -371,7 +428,7 @@ function Projects({ ctx }) {
       </div>
       {list.length === 0 && <p className="empty">{archived ? 'Архив пуст.' : 'Заведи проект — ремонт, отпуск, подарок — и считай, сколько пришло и куда ушло.'}</p>}
       {list.map((p) => {
-        const t = { income: p.income || 0, expense: p.expense || 0 };
+        const t = projectTotals(p, BASE, ctx.fx);
         const bal = t.income - t.expense;
         const pct = p.target ? Math.min(100, (t.expense / p.target) * 100) : null;
         return (
@@ -381,7 +438,7 @@ function Projects({ ctx }) {
             <div className="task-meta">
               <span>Пришло <Money value={t.income} type="income" /></span>
               <span>Ушло <Money value={t.expense} type="expense" /></span>
-              {p.target ? <span>Бюджет {fmtMoney(p.target)}</span> : null}
+              {p.target ? <span>Бюджет {fmtB(p.target)}</span> : null}
             </div>
             {pct != null && <div className="progress" style={{ marginTop: 10 }}><span style={{ width: `${pct}%`, background: pct >= 100 ? 'var(--bad)' : undefined }} /></div>}
           </button>
@@ -414,7 +471,7 @@ function ProjectSheet({ ctx, project, onClose }) {
         footer={<><button className="btn" onClick={() => (project ? setEdit(false) : onClose())}>Отмена</button><button className="btn btn-accent" onClick={save}>Сохранить</button></>}>
         <div className="field"><label>Название</label><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ремонт кухни" /></div>
         <div className="field"><label>Описание</label><textarea className="input" value={note} onChange={(e) => setNote(e.target.value)} /></div>
-        <div className="field"><label>Бюджет проекта (необязательно)</label><input className="input" inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="0 ₽" /></div>
+        <div className="field"><label>Бюджет проекта, {CURRENCIES[BASE].symbol} (необязательно)</label><input className="input" inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="0 ₽" /></div>
         <div className="field">
           <label>Цвет</label>
           <label className="swatch custom on" style={{ background: color }}><input type="color" value={color} onChange={(e) => setColor(e.target.value)} /></label>
@@ -432,19 +489,19 @@ function ProjectSheet({ ctx, project, onClose }) {
   }
 
   const list = projectTx || [];
-  const t = totals(list);
-  const cats = byCategory(list);
-  const planned = list.filter((x) => x.planned).reduce((s, x) => s + (x.type === 'expense' ? x.amount : 0), 0);
+  const t = totals(list, BASE, ctx.fx);
+  const cats = byCategory(list, BASE, ctx.fx);
+  const planned = plannedSum(list.filter((x) => x.planned), 'expense', ctx.fx);
 
   return (
     <Sheet title={project.name} onClose={onClose}>
       {project.note && <p className="hint" style={{ marginTop: 0 }}>{project.note}</p>}
       <div className="stats money-stats">
-        <div className="stat"><div className="n pos">{fmtMoney(t.income)}</div><div className="l">Пришло</div></div>
-        <div className="stat"><div className="n neg">{fmtMoney(t.expense)}</div><div className="l">Ушло</div></div>
-        <div className="stat"><div className="n">{fmtMoney(t.income - t.expense)}</div><div className="l">Остаток</div></div>
+        <div className="stat"><div className="n pos">{fmtB(t.income)}</div><div className="l">Пришло</div></div>
+        <div className="stat"><div className="n neg">{fmtB(t.expense)}</div><div className="l">Ушло</div></div>
+        <div className="stat"><div className="n">{fmtB(t.income - t.expense)}</div><div className="l">Остаток</div></div>
       </div>
-      {project.target ? <p className="hint">Бюджет {fmtMoney(project.target)} · осталось {fmtMoney(project.target - t.expense)}{planned ? ` · ещё в плане ${fmtMoney(planned)}` : ''}</p> : null}
+      {project.target ? <p className="hint">Бюджет {fmtB(project.target)} · осталось {fmtB(project.target - t.expense)}{planned ? ` · ещё в плане ${fmtB(planned)}` : ''}</p> : null}
       <QuickActions ctx={ctx} extra={{ projectId: project.id }} />
       <button className="btn btn-sm btn-ghost" onClick={() => ctx.openTx(null, { type: 'expense', planned: true, projectId: project.id })}>
         <i className="fa-solid fa-calendar-plus" /> Запланировать расход
@@ -456,7 +513,7 @@ function ProjectSheet({ ctx, project, onClose }) {
             <div key={c.cat} className="cat-bar">
               <span className="cat-name"><i className={catIcon(c.cat, 'expense')} /> {c.cat}</span>
               <span className="cat-track"><span style={{ width: `${(c.sum / cats[0].sum) * 100}%` }} /></span>
-              <span className="cat-sum">{fmtMoney(c.sum)}</span>
+              <span className="cat-sum">{fmtB(c.sum)}</span>
             </div>
           ))}
         </>
@@ -473,13 +530,14 @@ function WalletSheet({ ctx, wallet, onClose }) {
   const [name, setName] = useState(wallet?.name || '');
   const [icon, setIcon] = useState(wallet?.icon || WALLET_ICONS[0]);
   const [color, setColor] = useState(wallet?.color || '#6aa0d8');
+  const [currency, setCurrency] = useState(curOf(wallet, BASE));
   const current = wallet ? ctx.balances[wallet.id] || 0 : 0;
   const [bal, setBal] = useState(String(current));
   const ops = wallet ? ctx.txs.filter((t) => !t.planned && inMonth(t, ctx.month) && (t.walletId === wallet.id || t.toWalletId === wallet.id)) : [];
 
   const save = () => {
     const desired = parseMoney(bal);
-    const data = { name: name.trim() || 'Кошелёк', icon, color };
+    const data = { name: name.trim() || 'Кошелёк', icon, color, currency };
     // Остаток — счётчик в самом кошельке, поэтому правится напрямую
     if (Number.isFinite(desired) && desired !== current) data.balance = desired;
     else if (!wallet) data.balance = Number.isFinite(desired) ? desired : 0;
@@ -493,7 +551,12 @@ function WalletSheet({ ctx, wallet, onClose }) {
       footer={<><button className="btn" onClick={onClose}>Отмена</button><button className="btn btn-accent" onClick={save}>Сохранить</button></>}>
       <div className="field"><label>Название</label><input className="input" value={name} onChange={(e) => setName(e.target.value)} /></div>
       <div className="field">
-        <label>Сейчас в кошельке</label>
+        <label>Валюта</label>
+        <Seg value={currency} onChange={setCurrency} options={CURRENCY_CODES.map((c) => [c, `${CURRENCIES[c].symbol} ${c}`])} />
+        {wallet && currency !== curOf(wallet, BASE) && <div className="hint bad">Смена валюты не пересчитывает остаток и старые операции — поправь остаток вручную.</div>}
+      </div>
+      <div className="field">
+        <label>Сейчас в кошельке, {CURRENCIES[currency].symbol}</label>
         <input className="input money-input" inputMode="decimal" value={bal} onChange={(e) => setBal(e.target.value)} />
         <div className="hint">Если не сходится с реальностью — впиши фактический остаток.</div>
       </div>
@@ -536,6 +599,15 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
   const [items, setItems] = useState(() => (src.items || []).map((x) => ({ ...x, amountStr: String(x.amount) })));
   const [customCat, setCustomCat] = useState(false);
   const [viewer, setViewer] = useState(null);
+  const [fee, setFee] = useState(src.fee ? String(src.fee) : '');
+  const [feeCategory, setFeeCategory] = useState(src.feeCategory || (src.type === 'income' ? 'Налоги' : 'Комиссии'));
+  const [toAmount, setToAmount] = useState(src.toAmount != null ? String(src.toAmount) : '');
+  // валюта — от кошелька; у операции «вне кошельков» выбирается вручную
+  const [freeCur, setFreeCur] = useState(src.currency || src.qrCurrency || BASE);
+  const currency = walletId ? ctx.walletCur(walletId) : freeCur;
+  const toCurrency = type === 'transfer' && toWalletId ? ctx.walletCur(toWalletId) : null;
+  const crossCur = type === 'transfer' && toCurrency && toCurrency !== currency;
+  const sym = CURRENCIES[currency]?.symbol || '';
 
   const cats = type === 'income' ? INCOME_CATS : EXPENSE_CATS;
   const usedCats = useMemo(() => {
@@ -558,7 +630,10 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
     return () => { alive = false; };
   }, [receiptId, liveReceipt]);
   const receipt = liveReceipt || (loadedReceipt?.id === receiptId ? loadedReceipt : null);
-  const canSave = Number.isFinite(sum) && sum > 0 && (type !== 'transfer' || (walletId && toWalletId && walletId !== toWalletId));
+  const feeNum = parseMoney(fee) || 0;
+  const toNum = parseMoney(toAmount);
+  const canSave = Number.isFinite(sum) && sum > 0 && feeNum >= 0
+    && (type !== 'transfer' || (walletId && toWalletId && walletId !== toWalletId && (!crossCur || (Number.isFinite(toNum) && toNum > 0))));
 
   const save = () => {
     if (!canSave) return;
@@ -566,7 +641,9 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
     const orig = tx && toDate(tx.date);
     const when = orig && dayKey(orig) === date ? orig : new Date(y, m - 1, d, 12, 0, 0);
     saveTx(tx || null, {
-      type, amount: sum, walletId, toWalletId, category: category || cats[cats.length - 1].id, note: note.trim(),
+      type, amount: sum, currency, fee: feeNum, feeCategory,
+      toAmount: crossCur ? toNum : null, toCurrency,
+      walletId, toWalletId, category: category || cats[cats.length - 1].id, note: note.trim(),
       date: when, planned, projectId, receiptId,
       items: type === 'expense' ? items.map((x) => ({ id: x.id, title: x.title.trim(), amount: parseMoney(x.amountStr) || 0, category: x.category || category })) : [],
     }, ctx.me.uid, ctx.known).catch((e) => reportError(e, 'Не сохранилось'));
@@ -587,8 +664,8 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
         options={[['expense', 'Расход'], ['income', 'Доход'], ['transfer', 'Перевод']]} />
 
       <div className="field">
-        <label>Сумма</label>
-        <input className="input money-input" inputMode="decimal" value={amount} placeholder="0 ₽" autoFocus={!tx && amount === ''}
+        <label>{type === 'income' ? 'Сумма (до налога/комиссии)' : 'Сумма'}, {sym}</label>
+        <input className="input money-input" inputMode="decimal" value={amount} placeholder={`0 ${sym}`} autoFocus={!tx && amount === ''}
           onChange={(e) => setAmount(e.target.value)} />
       </div>
 
@@ -606,18 +683,53 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
         </div>
       </div>
 
+      {!walletId && type !== 'transfer' && (
+        <div className="field">
+          <label>Валюта</label>
+          <Seg value={freeCur} onChange={setFreeCur} options={CURRENCY_CODES.map((c) => [c, `${CURRENCIES[c].symbol} ${c}`])} />
+        </div>
+      )}
+
       {type === 'transfer' && (
         <div className="field">
           <label>Куда</label>
           <div className="chips">
             {ctx.activeWallets.filter((w) => w.id !== walletId).map((w) => (
               <button key={w.id} type="button" className={`chip pick ${toWalletId === w.id ? 'on' : ''}`} onClick={() => setToWalletId(w.id)}>
-                <i className={w.icon} /> {w.name}
+                <i className={w.icon} /> {w.name} <small>{curOf(w, BASE)}</small>
               </button>
             ))}
           </div>
         </div>
       )}
+
+      {crossCur && (
+        <div className="field">
+          <label>Пришло, {CURRENCIES[toCurrency].symbol}</label>
+          <input className="input money-input" inputMode="decimal" value={toAmount} placeholder={`0 ${CURRENCIES[toCurrency].symbol}`}
+            onChange={(e) => setToAmount(e.target.value)} />
+          {Number.isFinite(sum) && sum > 0 && Number.isFinite(toNum) && toNum > 0
+            ? <div className="hint">Курс обмена: 1 {currency} = {(toNum / sum).toLocaleString('ru-RU', { maximumFractionDigits: 4 })} {toCurrency}
+              {' '}(по рынку ≈ {convert(1, currency, toCurrency, ctx.fx).toLocaleString('ru-RU', { maximumFractionDigits: 4 })})</div>
+            : <div className="hint">Сколько реально зачислили на «{ctx.wallets.find((w) => w.id === toWalletId)?.name}».</div>}
+        </div>
+      )}
+
+      <div className="field">
+        <label>{type === 'income' ? 'Налог / комиссия' : 'Комиссия'}, {sym}</label>
+        <div className="fee-row">
+          <input className="input" inputMode="decimal" value={fee} placeholder="0" onChange={(e) => setFee(e.target.value)} />
+          <Seg value={feeCategory} onChange={setFeeCategory} options={FEE_CATEGORIES.map((c) => [c, c === 'Налоги' ? 'Налог' : 'Комиссия'])} className="seg-sm" />
+        </div>
+        {feeNum > 0 && Number.isFinite(sum) && sum > 0 && (
+          <div className="hint">
+            {type === 'income' && <>На счёт придёт: <b>{fmtCur(sum - feeNum, currency)}</b></>}
+            {type === 'expense' && <>Всего спишется: <b>{fmtCur(sum + feeNum, currency)}</b></>}
+            {type === 'transfer' && <>Из кошелька уйдёт: <b>{fmtCur(sum + feeNum, currency)}</b></>}
+            {' '}· {fmtCur(feeNum, currency)} → «{feeCategory}»
+          </div>
+        )}
+      </div>
 
       {type !== 'transfer' && (
         <div className="field">
@@ -670,7 +782,7 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
                 {receipt.thumb ? <img src={receipt.thumb} alt="Чек" /> : <i className="fa-solid fa-receipt" />}
               </button>
               <div style={{ flex: 1 }}>
-                {receipt.qr ? <div>QR: {fmtMoney(receipt.qr.sum)}</div> : <div className="hint" style={{ margin: 0 }}>без QR</div>}
+                {receipt.qr ? <div>QR: {fmtCur(receipt.qr.sum, receipt.qr.currency || 'RUB')}</div> : <div className="hint" style={{ margin: 0 }}>без QR</div>}
                 <button type="button" className="link-btn" onClick={() => setReceiptId(null)}>Открепить</button>
               </div>
             </div>
@@ -707,8 +819,8 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
           <button type="button" className="btn btn-sm" onClick={() => setItems((p) => [...p, { id: uid6(), title: '', amountStr: '', category: '' }])}>+ позиция</button>
           {items.length > 0 && Number.isFinite(sum) && (
             <div className={`hint ${itemsSum > sum + 0.004 ? 'bad' : ''}`}>
-              Разнесено {fmtMoney(itemsSum)} из {fmtMoney(sum)}
-              {sum - itemsSum > 0.004 ? ` · остаток ${fmtMoney(sum - itemsSum)} → «${category || 'Другое'}»` : ''}
+              Разнесено {fmtCur(itemsSum, currency)} из {fmtCur(sum, currency)}
+              {sum - itemsSum > 0.004 ? ` · остаток ${fmtCur(sum - itemsSum, currency)} → «${category || 'Другое'}»` : ''}
             </div>
           )}
         </div>
@@ -764,7 +876,7 @@ function ReceiptsSheet({ ctx, onClose }) {
               {r.thumb ? <img src={r.thumb} alt="Чек" /> : <i className="fa-solid fa-receipt" />}
             </button>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div>{r.qr ? <b>{fmtMoney(r.qr.sum)}</b> : <span className="hint" style={{ margin: 0 }}>сумма не распознана</span>}</div>
+              <div>{r.qr ? <b>{fmtCur(r.qr.sum, r.qr.currency || 'RUB')}</b> : <span className="hint" style={{ margin: 0 }}>сумма не распознана</span>}</div>
               <div className="hint" style={{ margin: 0 }}>
                 {r.qr ? fmtDate(new Date(r.qr.date)) : d ? fmtDate(d) : 'сейчас'} · <Avatar email={who.email} avatar={who.avatar} /> {who.name}
               </div>

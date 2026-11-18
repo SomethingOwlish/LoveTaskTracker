@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { reportError } from '../lib/toast';
+import { searchMedia, mediaFields } from '../lib/media';
 import { Avatar } from './Avatar';
 import { Sheet, Seg, loadPref, savePref } from './Sheet';
 import { tsMs, fmtDate, toDate } from '../lib/util';
@@ -67,6 +68,26 @@ export function MurmurView({ items: liveItems, me, users, userOf }) {
     const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
     lines.forEach((title) => addMurmur({ kind, title, uid: me.uid }).catch((e) => reportError(e)));
     setText('');
+    setFound(null);
+    if (filter === 'done') setFilter('want');
+  };
+
+  // Поиск по базе фильмов/игр: пока пишешь название, ниже появляются варианты
+  // с постерами. Выбрала — запись сохраняется с постером, годом и описанием.
+  const [found, setFound] = useState(null); // null | 'loading' | [] | Error
+  useEffect(() => {
+    const q = text.trim();
+    if (q.length < 2 || q.includes('\n')) { setFound(null); return; }
+    setFound('loading');
+    let alive = true;
+    const t = setTimeout(() => {
+      searchMedia(kind, q).then((r) => alive && setFound(r)).catch((e) => alive && setFound(e));
+    }, 450);
+    return () => { alive = false; clearTimeout(t); };
+  }, [text, kind]);
+  const addFound = (m) => {
+    addMurmur({ kind, title: m.title, uid: me.uid, media: mediaFields(m) }).catch((e) => reportError(e));
+    setText(''); setFound(null);
     if (filter === 'done') setFilter('want');
   };
 
@@ -94,8 +115,9 @@ export function MurmurView({ items: liveItems, me, users, userOf }) {
           placeholder={`Хочу ${K.one}…`}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); add(); } }} />
-        <button className="qa-send" onClick={add} disabled={!text.trim()} aria-label="Добавить"><i className="fa-solid fa-plus" /></button>
+        <button className="qa-send" onClick={add} disabled={!text.trim()} aria-label="Добавить как есть"><i className="fa-solid fa-plus" /></button>
       </div>
+      {found && <MediaResults found={found} onPick={addFound} hint="Выбери вариант или жми «+», чтобы добавить просто названием" />}
 
       <div className="filters">
         <button className={`pill ${filter === 'want' ? 'on' : ''}`} onClick={() => setFilter('want')}>Хотим</button>
@@ -144,12 +166,13 @@ function MurmurCard({ item, me, partner, userOf, K, onRate, onEdit }) {
   return (
     <div className={`task murmur ${done ? 'is-done' : ''}`} onClick={onEdit}>
       <div className="murmur-head">
-        {item.poster && <img className="murmur-poster" src={item.poster} alt="" loading="lazy" referrerPolicy="no-referrer" />}
-        <div className="murmur-main">
+        {item.poster && <img className="murmur-poster" src={item.poster} alt="" loading="lazy" />}
+        <div className="murmur-info">
           <div className="task-top">
-            <h3>{item.title}{item.year ? <span className="murmur-year"> {item.year}</span> : null}</h3>
+            <h3>{item.title}{item.year ? <span className="murmur-year"> · {item.year}</span> : null}</h3>
             {done && avg != null && <span className="score big">{avg.toFixed(avg % 1 ? 1 : 0)}</span>}
           </div>
+          {item.overview && <p className="desc murmur-overview">{item.overview}</p>}
           {item.note && <p className="desc">{item.note}</p>}
         </div>
       </div>
@@ -215,7 +238,38 @@ function RateSheet({ item, me, K, onClose }) {
   );
 }
 
+// Список найденного (общий для добавления и для «найти постер»)
+function MediaResults({ found, onPick, hint }) {
+  if (found === 'loading') return <p className="hint"><i className="fa-solid fa-spinner fa-spin" /> Ищу…</p>;
+  if (found instanceof Error) return <p className="hint">{found.message}</p>;
+  if (!found.length) return <p className="hint">Ничего не нашлось.</p>;
+  return (
+    <div className="media-results">
+      {hint && <p className="hint" style={{ margin: '0 0 6px' }}>{hint}</p>}
+      {found.map((m) => (
+        <button key={m.id} type="button" className="media-item" onClick={() => onPick(m)}>
+          {m.poster ? <img src={m.poster} alt="" loading="lazy" /> : <span className="media-noposter"><i className="fa-solid fa-image" /></span>}
+          <span className="media-text">
+            <b>{m.title}</b>{m.year ? ` · ${m.year}` : ''}
+            {m.original && m.original !== m.title && <small> ({m.original})</small>}
+            {m.overview && <span className="media-ov">{m.overview}</span>}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function EditSheet({ item, onClose }) {
+  const [found, setFound] = useState(null);
+  const findPoster = () => {
+    setFound('loading');
+    searchMedia(item.kind, item.title).then(setFound).catch(setFound);
+  };
+  const pick = (m) => {
+    updateMurmur(item.id, mediaFields({ ...m, title: item.title })).catch((e) => reportError(e));
+    onClose();
+  };
   const [title, setTitle] = useState(item.title);
   const [note, setNote] = useState(item.note || '');
   const [link, setLink] = useState(item.link || '');
@@ -235,6 +289,8 @@ function EditSheet({ item, onClose }) {
       <div className="field"><label>Заметка</label><textarea className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Кто посоветовал, где смотреть…" /></div>
       <div className="field"><label>Ссылка</label><input className="input" value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://" inputMode="url" /></div>
       {item.link && <p><a href={item.link} target="_blank" rel="noreferrer">Открыть ссылку <i className="fa-solid fa-arrow-up-right-from-square" /></a></p>}
+      <button type="button" className="btn btn-sm" onClick={findPoster}><i className="fa-solid fa-image" /> {item.poster ? 'Сменить постер' : 'Найти постер и описание'}</button>
+      {found && <MediaResults found={found} onPick={pick} />}
       <div className="row" style={{ marginTop: 10 }}>
         {item.status === 'done' && (
           <button className="btn" onClick={() => { if (confirm('Вернуть в «Хотим»? Оценки сбросятся.')) { unwatchMurmur(item); onClose(); } }}>Вернуть в «Хотим»</button>

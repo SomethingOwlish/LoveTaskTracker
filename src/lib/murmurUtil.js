@@ -5,13 +5,15 @@ export function murmurAwaitingMe(items, uid) {
 
 // Новая запись Мурмура — общая для приложения и расширения Chrome.
 // serverTimestamp передаётся снаружи (у firestore и firestore/lite он свой).
-// poster / year / source заполняет расширение, когда берёт фильм или игру со страницы.
-export function buildMurmurDoc({ kind, title, note = '', link = '', uid, poster = null, year = null, source = null }, { serverTimestamp }) {
+// poster / year / source заполняет расширение, когда берёт фильм или игру со страницы;
+// media — то, что нашёл поиск TMDB/RAWG в приложении (см. lib/media.js mediaFields).
+export function buildMurmurDoc({ kind, title, note = '', link = '', uid, poster = null, year = null, source = null, media = null }, { serverTimestamp }) {
   const t = (title || '').trim();
   if (!t) return null;
   return {
     kind, title: t, note, link: link || null,
     poster: poster || null, year: year || null, source: source || null,
+    ...(media || {}), // найденное поиском в приложении: постер, год, описание, рейтинг…
     addedBy: uid, wantedBy: [uid],
     status: 'want', ratings: {}, reviews: {},
     createdAt: serverTimestamp(), doneAt: null, doneBy: null,

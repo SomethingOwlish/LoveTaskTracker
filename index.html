@@ -31,6 +31,47 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
     />
+    <!--
+      Самовосстановление после выкатки. Если страница или вкладка ссылается на
+      файлы прошлой версии (их уже нет на сервере), код не загрузится и экран
+      останется пустым. Тогда сбрасываем закэшированную версию и перезагружаемся —
+      не чаще раза в минуту, чтобы не уйти в цикл.
+    -->
+    <script>
+      (function () {
+        var KEY = 'ltt:recoveredAt';
+        function recover(reason) {
+          var last = 0;
+          try { last = Number(sessionStorage.getItem(KEY)) || 0; } catch (e) {}
+          if (Date.now() - last < 60000) {
+            var root = document.getElementById('root');
+            if (root && !root.childElementCount) {
+              root.innerHTML = '<div style="min-height:100vh;display:grid;place-items:center;padding:24px;text-align:center;color:#ece3d6;font-family:Georgia,serif">' +
+                '<div><p>Не получилось загрузить приложение.</p><button onclick="location.reload()" style="padding:12px 18px;border-radius:10px;border:0;background:#d99873;color:#2a1f18;font-weight:700">Обновить</button></div></div>';
+            }
+            return;
+          }
+          try { sessionStorage.setItem(KEY, String(Date.now())); } catch (e) {}
+          console.warn('Перезагрузка после выкатки:', reason);
+          var jobs = [];
+          if ('serviceWorker' in navigator) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+          if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+          Promise.all(jobs).catch(function () {}).then(function () { location.reload(); });
+        }
+        window.__lttRecover = recover;
+        // не загрузился основной файл приложения или стили
+        window.addEventListener('error', function (e) {
+          var t = e.target;
+          if (t && (t.tagName === 'SCRIPT' || (t.tagName === 'LINK' && t.rel === 'stylesheet')) && /\/assets\//.test(t.src || t.href || '')) recover('asset ' + (t.src || t.href));
+        }, true);
+        // не загрузилась ленивая вкладка (Vite) или динамический импорт
+        window.addEventListener('vite:preloadError', function (e) { e.preventDefault(); recover('preload'); });
+        window.addEventListener('unhandledrejection', function (e) {
+          var m = String((e.reason && e.reason.message) || e.reason || '');
+          if (/dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(m)) recover(m);
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

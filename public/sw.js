@@ -1,6 +1,6 @@
 // Простой service worker: кэшируем оболочку приложения для офлайн-открытия.
 // Данные всё равно тянутся из Firestore при наличии сети.
-const CACHE = 'ltt-v3';
+const CACHE = 'ltt-v4';
 const SHELL = ['./', './index.html', './manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
@@ -49,4 +49,28 @@ self.addEventListener('fetch', (e) => {
       return cached || net;
     })
   );
+});
+
+// ---------- Push-уведомления ----------
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch { data = { title: 'Совушка & Гусик', body: e.data?.text() }; }
+  e.waitUntil(self.registration.showNotification(data.title || 'Совушка & Гусик', {
+    body: data.body || '',
+    tag: data.tag,
+    icon: './icon-192.png',
+    badge: './icon-192.png',
+    data: { url: data.url || './' },
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = e.notification.data?.url || './';
+  e.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const open = all.find((c) => c.url.startsWith(self.registration.scope));
+    if (open) { await open.focus(); return open.navigate(url); }
+    return self.clients.openWindow(url);
+  })());
 });

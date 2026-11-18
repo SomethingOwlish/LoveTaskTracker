@@ -4,4 +4,6 @@ node_modules/
 .dev.vars
 .DS_Store
 .claude/
+
+scripts/push/node_modules/
 /extension/dist/
