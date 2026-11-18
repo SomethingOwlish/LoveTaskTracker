@@ -11,7 +11,7 @@
     "not_found_handling": "single-page-application",
     // воркер запускается только для служебных путей Firebase Auth,
     // остальное — статика (бесплатно и без лимита запросов)
-    "run_worker_first": ["/__/*"]
+    "run_worker_first": ["/__/*", "/api/*"]
   },
   "observability": { "enabled": true },
   // Предварительные версии для веток и PR (Workers Builds → `wrangler preview`).

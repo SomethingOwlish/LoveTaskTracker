@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "deploy": "vite build && wrangler deploy",
     "preview:cf": "vite build && wrangler dev",
+    "ext:build": "vite build -c extension/vite.config.js",
+    "ext:watch": "vite build -c extension/vite.config.js --watch",
     "test": "vitest run"
   },
   "dependencies": {

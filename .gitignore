@@ -6,3 +6,4 @@ node_modules/
 .claude/
 
 scripts/push/node_modules/
+/extension/dist/
