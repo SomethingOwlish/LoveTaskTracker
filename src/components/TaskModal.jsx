@@ -237,7 +237,7 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
             <input type="range" min="-5" max="5" value={f.importance} onChange={(e) => set('importance', Number(e.target.value))} />
             <span className="val">{f.importance > 0 ? '+' : ''}{f.importance}</span>
           </div>
-          {f.importance > 0 && <div className="hint">В игре: +{f.importance} опыта исполнителю, когда задача закрыта.</div>}
+          {f.importance > 0 && <div className="hint">В игре: +{Math.ceil(f.importance / 2)} мон. исполнителю сверх обычных двух.</div>}
         </div>
         <div className="field">
           <label>Срочность (↑ срочно · не срочно ↓): {f.urgency > 0 ? '+' : ''}{f.urgency}</label>

@@ -2,7 +2,7 @@
 
 Источник — набор species.json из заготовки systemsetup:
   python3 scripts/export-poslemirye.py <путь>/systemsetup/src/content/seeds/poslemirye/data
-Пишет src/game/species.json: только то, что нужно автобаттлеру (статы ★1–★3,
+Пишет src/game/species.json и src/game/giants.json: только то, что нужно автобаттлеру (статы ★1–★3,
 формы, приёмы, картинки, стихия, класс, редкость, слабость).
 """
 import json, sys, os
@@ -29,3 +29,21 @@ for e in species:
 dst = os.path.join(os.path.dirname(__file__), '..', 'src', 'game', 'species.json')
 json.dump(out, open(dst, 'w'), ensure_ascii=False, separators=(',', ':'))
 print(len(out), 'видов →', os.path.normpath(dst))
+
+# Гиганты — боссы недельных ранов.
+giants = json.load(open(os.path.join(src, 'giants.json')))['entries']
+gout = []
+for e in giants:
+    v = e['values']
+    kids = v.get('childrenRefs') or []
+    if isinstance(kids, str):
+        kids = json.loads(kids.replace("'", '"'))
+    gout.append({
+        'id': e['key'], 'name': e['name'], 'kind': v.get('subtitle', '').replace('гигант, ', ''),
+        'el': v['element'], 'epithet': v.get('epithet', ''), 'where': v.get('where', ''),
+        'aura': v.get('auraName', ''), 'kids': kids, 'img': v.get('portrait') or '',
+        'wrath': v.get('wrathFull', ''),
+    })
+gdst = os.path.join(os.path.dirname(__file__), '..', 'src', 'game', 'giants.json')
+json.dump(gout, open(gdst, 'w'), ensure_ascii=False, separators=(',', ':'))
+print(len(gout), 'гигантов →', os.path.normpath(gdst))
