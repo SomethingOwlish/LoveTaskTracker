@@ -1,8 +1,43 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { isClosed } from '../lib/util';
+import { updateTask } from '../lib/db';
+import { reportError, toast } from '../lib/toast';
+
+// позиция в % ↔ важность/срочность (-5…5, шаг 9% от центра)
+const toScore = (pct) => Math.max(-5, Math.min(5, Math.round((50 - pct) / 9)));
 
 export function MatrixView({ tasks, me, users, onOpen, projectColors = {} }) {
   const [scope, setScope] = useState('all'); // all | mine | partner
+  // Перетаскивание точки: пальцем тащишь задачу в другой квадрант, при
+  // отпускании сохраняются новые важность/срочность. Короткое касание — открыть.
+  const boxRef = useRef(null);
+  const [drag, setDrag] = useState(null); // { id, left, top, moved }
+  const startDrag = (e, t, left, top) => {
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* палец уже отпущен */ }
+    setDrag({ id: t.id, left, top, x: e.clientX, y: e.clientY, moved: false });
+  };
+  const moveDrag = (e) => {
+    if (!drag) return;
+    const r = boxRef.current.getBoundingClientRect();
+    const moved = drag.moved || Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 6;
+    const left = Math.max(2, Math.min(98, ((e.clientX - r.left) / r.width) * 100));
+    const top = Math.max(2, Math.min(98, ((e.clientY - r.top) / r.height) * 100));
+    setDrag({ ...drag, left, top, moved });
+  };
+  const endDrag = (t) => {
+    const d = drag;
+    setDrag(null);
+    if (!d) return;
+    if (!d.moved) { onOpen(t); return; }
+    const importance = toScore(d.left);
+    const urgency = toScore(d.top);
+    const prev = t.priorityMatrix || { importance: 0, urgency: 0 };
+    if (prev.importance === importance && prev.urgency === urgency) return;
+    updateTask(t.id, { priorityMatrix: { importance, urgency } }).catch((e) => reportError(e));
+    toast(`«${t.title}»: важность ${importance > 0 ? '+' : ''}${importance}, срочность ${urgency > 0 ? '+' : ''}${urgency}`, {
+      ms: 4000, action: { label: 'Отменить', fn: () => updateTask(t.id, { priorityMatrix: prev }).catch((e) => reportError(e)) },
+    });
+  };
   const partner = users.find((u) => u.uid !== me.uid);
 
   const active = tasks.filter((t) => {
@@ -40,9 +75,9 @@ export function MatrixView({ tasks, me, users, onOpen, projectColors = {} }) {
       </div>
 
       <p style={{ color: 'var(--text-dim)', fontSize: 13, margin: '0 0 4px' }}>
-        Слева — важно, сверху — срочно. Точка задачи на координатной сетке.
+        Слева — важно, сверху — срочно. Перетащи точку пальцем, чтобы поменять приоритет; коснись — открыть задачу.
       </p>
-      <div className="matrix">
+      <div className="matrix" ref={boxRef}>
         <span className="axislabel lbl-top">Срочно</span>
         <span className="axislabel lbl-bottom">Не срочно</span>
         <span className="axislabel lbl-left">Важно</span>
@@ -62,10 +97,18 @@ export function MatrixView({ tasks, me, users, onOpen, projectColors = {} }) {
           return (
             <button
               key={t.id}
-              className="dot"
-              style={{ left: `${left}%`, top: `${top}%`, background: color }}
+              className={`dot ${drag?.id === t.id ? 'dragging' : ''}`}
+              style={{
+                left: `${drag?.id === t.id ? drag.left : left}%`,
+                top: `${drag?.id === t.id ? drag.top : top}%`,
+                background: color,
+              }}
               title={t.title}
-              onClick={() => onOpen(t)}
+              onPointerDown={(e) => startDrag(e, t, left, top)}
+              onPointerMove={moveDrag}
+              onPointerUp={() => endDrag(t)}
+              onPointerCancel={() => setDrag(null)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onOpen(t); }}
             >
               {t.title.slice(0, 1).toUpperCase()}
             </button>

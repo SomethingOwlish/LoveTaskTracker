@@ -62,6 +62,15 @@ export function subscribeClosedTasks(cb, max = 100) {
   return listen(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
 
+// Задачи, закрытые в указанный день (для шторки дня в настроении) — по запросу.
+export function subscribeDoneOnDay(day, cb) {
+  const [y, m, d] = day.split('-').map(Number);
+  const q = query(tasksCol,
+    where('completedAt', '>=', Timestamp.fromDate(new Date(y, m - 1, d))),
+    where('completedAt', '<', Timestamp.fromDate(new Date(y, m - 1, d + 1))));
+  return listen(q, (snap) => cb(snap.docs.map((x) => ({ id: x.id, ...x.data() }))));
+}
+
 export async function fetchTask(id) {
   const s = await getDoc(doc(db, 'tasks', id));
   return s.exists() ? { id: s.id, ...s.data() } : null;
