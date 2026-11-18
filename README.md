@@ -78,6 +78,29 @@ workflow `pages-redirect.yml`) и снимает старый service worker.
 
 ---
 
+## 3.2. Постеры в Мурмуре (TMDB и RAWG)
+
+Пока пишешь название в Мурмуре, ниже появляются варианты с постером, годом и
+описанием. Поиск идёт через воркер (`/api/media`, `worker/media.js`), ключи хранятся
+только в секретах воркера и пускают лишь ваши два аккаунта. Без ключей всё работает
+как раньше — просто без подсказок.
+
+**Фильмы и сериалы — TMDB (бесплатно):**
+1. Зарегистрируйся на https://www.themoviedb.org/signup и подтверди почту.
+2. Профиль → Settings → **API** → Create → тип «Developer», назначение — личное
+   некоммерческое приложение (название, описание: «семейный список фильмов»,
+   сайт: адрес приложения).
+3. На странице API скопируй **API Read Access Token** (длинная строка, начинается с `eyJ`).
+4. Дашборд Cloudflare → Workers & Pages → `lovetasktracker` → Settings →
+   **Variables and Secrets** → Add → тип **Secret**, имя `TMDB_TOKEN`, значение —
+   этот токен → Deploy. (Или в терминале: `npx wrangler secret put TMDB_TOKEN`.)
+
+**Игры — RAWG (бесплатно, 20 000 запросов в месяц):**
+1. Зарегистрируйся на https://rawg.io/apidocs → Get API Key.
+2. Скопируй ключ и добавь его так же: секрет `RAWG_KEY`.
+
+Секреты подхватываются сразу, пересобирать приложение не нужно.
+
 ## 4. Установка на iPhone (как приложение)
 
 1. Открыть адрес приложения в **Safari**.
@@ -85,6 +108,12 @@ workflow `pages-redirect.yml`) и снимает старый service worker.
 3. Появится иконка-кнопка; запускается в полноэкранном режиме без адресной строки.
 
 То же самое работает на Android через Chrome («Установить приложение»).
+
+### Расширение Chrome
+
+Быстрые задачи прямо из браузера: кнопка на панели, ⌘⇧Y и правый клик по
+тексту / ссылке / странице. Настройка и установка — в
+[extension/README.md](extension/README.md).
 
 ---
 
@@ -94,11 +123,13 @@ workflow `pages-redirect.yml`) и снимает старый service worker.
 src/
   App.jsx              вход, вкладки, управление темой
   firebase.js          инициализация Firebase
+  firebaseConfig.js    ключи проекта (общие с расширением)
   config.js            два пользователя (whitelist)
   theme.css            две темы + переменные
   styles.css           стили интерфейса
   lib/
     db.js              работа с Firestore (задачи, события, комментарии, ревью)
+    taskDoc.js         форма документа задачи (общая с расширением)
     recurrence.js      пересчёт повторений
     util.js            даты, квадранты, хелперы статистики
   components/
@@ -114,6 +145,7 @@ src/
     BudgetView.jsx     бюджет-планнер
 public/
   manifest.webmanifest, sw.js, иконки   PWA
+extension/             расширение Chrome (npm run ext:build → extension/dist)
 firestore.rules        правила доступа (вставить в Firebase)
 ```
 
