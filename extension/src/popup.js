@@ -1,6 +1,7 @@
-// Форма «Новая задача» во всплывающем окне расширения.
+// Всплывающее окно расширения: «Новая задача» и (на странице фильма/игры) «В Мурмур».
 // Всё общение с Firebase — через фоновый скрипт (background.js).
 import { DEADLINES, QUADRANTS, taskFromText, splitTags, isUsefulUrl, cleanPageTitle } from './shared.js';
+import { collectPageSignals, detectMedia } from './media.js';
 import { OAUTH_CLIENT_ID, REDIRECT_URI } from '../config.js';
 
 const $app = document.getElementById('app');
@@ -29,11 +30,17 @@ const AVATARS = {
 };
 const ava = (p) => `<span class="ava">${AVATARS[p?.avatar] || AVATARS.owl}</span>`;
 
-// Что открыто во вкладке: адрес, заголовок и выделенный текст.
+// Что открыто во вкладке: адрес, заголовок, выделенный текст и — если это
+// страница фильма, сериала или игры — что именно (media).
 async function readTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   let selection = '';
+  let media = null;
   if (tab?.id && isUsefulUrl(tab.url)) {
+    try {
+      const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectPageSignals });
+      media = r?.result ? detectMedia(r.result) : null;
+    } catch { /* нет доступа к странице */ }
     try {
       const [r] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
@@ -48,7 +55,7 @@ async function readTab() {
       selection = r?.result || '';
     } catch { /* страницы Chrome и магазина расширений читать нельзя */ }
   }
-  return { url: tab?.url || '', title: tab?.title || '', selection };
+  return { url: tab?.url || '', title: tab?.title || '', selection, media };
 }
 
 /* ---------- экран входа ---------- */
@@ -78,7 +85,7 @@ function renderSignIn(error = '') {
 }
 
 /* ---------- форма ---------- */
-function renderForm({ me, partner }, tab, saved) {
+function renderTaskForm($panel, { me, partner }, tab, saved) {
   const fromSel = taskFromText(tab.selection);
   const hasLink = isUsefulUrl(tab.url);
   const s = {
@@ -93,15 +100,8 @@ function renderForm({ me, partner }, tab, saved) {
 
   const chip = (group, key, label, on) => `<button type="button" class="chip ${on ? 'on' : ''}" data-group="${group}" data-key="${key}">${esc(label)}</button>`;
 
-  $app.innerHTML = `
+  $panel.innerHTML = `
     <form id="f" autocomplete="off">
-      <header class="head">
-        ${ava(me)}
-        <h1>Новая задача</h1>
-        <button type="button" class="icon-btn" id="theme" title="Сменить тему" aria-label="Сменить тему">◐</button>
-        <button type="button" class="icon-btn" id="open" title="Открыть трекер" aria-label="Открыть трекер">↗</button>
-      </header>
-
       <textarea id="title" class="input title" rows="2" placeholder="Что сделать?">${esc(fromSel.title || cleanPageTitle(tab.title))}</textarea>
       <div id="note-wrap" ${fromSel.description ? '' : 'hidden'}>
         <textarea id="note" class="input" rows="3" placeholder="Заметка">${esc(fromSel.description)}</textarea>
@@ -153,24 +153,15 @@ function renderForm({ me, partner }, tab, saved) {
 
       <button type="submit" class="btn btn-primary" id="save">Создать <kbd>⌘↵</kbd></button>
       <p class="error" id="err" hidden></p>
-      <footer class="foot">
-        <span class="dim">${esc(me.name)}</span>
-        <button type="button" class="link-btn" id="signout">выйти</button>
-      </footer>
     </form>`;
 
   const $ = (id) => document.getElementById(id);
   const title = $('title');
-  title.focus();
-  title.select();
   autoGrow(title);
   title.addEventListener('input', () => autoGrow(title));
 
   $('add-note').addEventListener('click', () => { $('note-wrap').hidden = false; $('add-note').hidden = true; $('note').focus(); });
   $('attach')?.addEventListener('change', (e) => { s.attachLink = e.target.checked; });
-  $('open').addEventListener('click', () => { call('openApp'); window.close(); });
-  $('theme').addEventListener('click', toggleTheme);
-  $('signout').addEventListener('click', async () => { await call('signOut'); renderSignIn(); });
 
   $('who').addEventListener('click', (e) => {
     const b = e.target.closest('[data-who]');
@@ -181,17 +172,17 @@ function renderForm({ me, partner }, tab, saved) {
     prefs.set({ who: s.who });
   });
 
-  $app.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => {
+  $panel.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => {
     const { group, key } = b.dataset;
     if (group === 'deadline') {
       s.deadline = key;
-      $app.querySelectorAll('[data-group="deadline"]').forEach((x) => x.classList.toggle('on', x === b));
+      $panel.querySelectorAll('[data-group="deadline"]').forEach((x) => x.classList.toggle('on', x === b));
       $('custom').hidden = key !== 'custom';
       if (key === 'custom') $('custom').focus();
     } else {
       // квадрант можно снять повторным нажатием
       s.quad = s.quad === key ? null : key;
-      $app.querySelectorAll('[data-group="quad"]').forEach((x) => x.classList.toggle('on', x.dataset.key === s.quad));
+      $panel.querySelectorAll('[data-group="quad"]').forEach((x) => x.classList.toggle('on', x.dataset.key === s.quad));
     }
   }));
 
@@ -237,7 +228,12 @@ function renderForm({ me, partner }, tab, saved) {
     try {
       const res = await call('createTask', { data });
       if (project) prefs.set({ recentProjects: [project, ...saved.recentProjects.filter((p) => p !== project)].slice(0, 10) });
-      renderDone(res, assignee, me);
+      renderDone({
+        heading: assignee.uid !== me.uid ? `Поручено: ${assignee.name}` : 'Задача создана',
+        title: res.title,
+        taskId: res.id,
+        undo: () => call('undoTask', { id: res.id, notifId: res.notifId }),
+      });
     } catch (ex) {
       if (ex.code === 'NOT_SIGNED_IN') return renderSignIn(ex.message);
       err.textContent = 'Не сохранилось: ' + ex.message;
@@ -253,32 +249,167 @@ function autoGrow(el) {
   el.style.height = Math.min(el.scrollHeight, 140) + 'px';
 }
 
+/* ---------- Мурмур ---------- */
+const KINDS = { movie: 'Фильм', series: 'Сериал', game: 'Игра' };
+
+function renderMurmurForm($panel, { me, partner }, media) {
+  const s = { kind: media.kind, existing: null };
+  $panel.innerHTML = `
+    <form id="m" autocomplete="off">
+      <div class="media">
+        ${media.poster ? `<img class="poster" src="${esc(media.poster)}" alt="" referrerpolicy="no-referrer" />` : '<div class="poster empty">🎬</div>'}
+        <div class="media-body">
+          <div class="seg kinds" id="kinds">
+            ${Object.entries(KINDS).map(([k, v]) => `<button type="button" class="seg-btn ${k === s.kind ? 'on' : ''}" data-kind="${k}">${v}</button>`).join('')}
+          </div>
+          <textarea id="m-title" class="input title" rows="2">${esc(media.title)}</textarea>
+          <div class="dim small">${[media.year, media.source].filter(Boolean).map(esc).join(' · ')}</div>
+        </div>
+      </div>
+      <input id="m-note" class="input" placeholder="Заметка — где смотреть, кто посоветовал…" />
+      <p class="dupe" id="dupe" hidden></p>
+      <button type="submit" class="btn btn-primary" id="m-save">＋ В Мурмур <kbd>↵</kbd></button>
+      <p class="error" id="m-err" hidden></p>
+    </form>`;
+
+  const $ = (id) => document.getElementById(id);
+  const title = $('m-title');
+  autoGrow(title);
+  title.addEventListener('input', () => autoGrow(title));
+
+  $('kinds').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-kind]');
+    if (!b) return;
+    s.kind = b.dataset.kind;
+    $('kinds').querySelectorAll('[data-kind]').forEach((x) => x.classList.toggle('on', x === b));
+  });
+
+  // Уже есть в списке? Тогда вместо «добавить» — «я тоже хочу» или просто сообщаем.
+  call('findMurmur', { link: media.link, title: media.title }).then((ex) => {
+    if (!ex) return;
+    s.existing = ex;
+    const dupe = $('dupe');
+    const done = ex.status === 'done';
+    const iWant = ex.wantedBy.includes(me.uid);
+    const others = ex.wantedBy.filter((u) => u !== me.uid).length && partner ? partner.name : '';
+    dupe.hidden = false;
+    dupe.textContent = done
+      ? `Уже ${ex.kind === 'game' ? 'прошли' : 'посмотрели'} — «${ex.title}» в архиве Мурмура.`
+      : iWant ? `Уже в «Хотим»${others ? ` — и ${others} тоже хочет` : ''}.`
+        : `«${ex.title}» уже в «Хотим»${others ? ` — хочет ${others}` : ''}.`;
+    const btn = $('m-save');
+    if (done || iWant) { btn.disabled = true; btn.textContent = 'Уже в списке'; }
+    else { btn.innerHTML = '♥ Я тоже хочу <kbd>↵</kbd>'; }
+  }).catch(() => { /* проверка не удалась — просто даём добавить */ });
+
+  $('m').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('m').requestSubmit(); }
+  });
+
+  $('m').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = $('m-err');
+    err.hidden = true;
+    const t = title.value.trim();
+    if (!t) { title.focus(); return; }
+    const btn = $('m-save');
+    btn.disabled = true;
+    btn.textContent = 'Сохраняю…';
+    try {
+      if (s.existing) {
+        await call('wantMurmur', { id: s.existing.id });
+        return renderDone({ heading: 'Отметили: хочу', title: s.existing.title, openTab: 'murmur' });
+      }
+      const res = await call('addMurmur', {
+        data: { kind: s.kind, title: t, note: $('m-note').value.trim(), link: media.link, poster: media.poster || null, year: media.year, source: media.source },
+      });
+      renderDone({ heading: `${KINDS[res.kind]} в Мурмуре`, title: res.title, openTab: 'murmur', undo: () => call('undoMurmur', { id: res.id }) });
+    } catch (ex) {
+      if (ex.code === 'NOT_SIGNED_IN') return renderSignIn(ex.message);
+      err.textContent = 'Не сохранилось: ' + ex.message;
+      err.hidden = false;
+      btn.disabled = false;
+      btn.innerHTML = '＋ В Мурмур <kbd>↵</kbd>';
+    }
+  });
+}
+
+/* ---------- общий каркас: шапка, вкладки, подвал ---------- */
+function renderMain(status, tab, saved) {
+  const { me } = status;
+  const media = tab.media;
+  // на странице фильма/игры по умолчанию — Мурмур, но если что-то выделено — задача
+  let current = media && !tab.selection.trim() ? 'murmur' : 'task';
+  $app.innerHTML = `
+    <header class="head">
+      ${ava(me)}
+      <h1 id="heading"></h1>
+      <button type="button" class="icon-btn" id="theme" title="Сменить тему" aria-label="Сменить тему">◐</button>
+      <button type="button" class="icon-btn" id="open" title="Открыть трекер" aria-label="Открыть трекер">↗</button>
+    </header>
+    ${media ? `
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="murmur">🎬 Мурмур</button>
+      <button type="button" role="tab" data-tab="task">✓ Задача</button>
+    </div>` : ''}
+    <section id="p-murmur" hidden></section>
+    <section id="p-task" hidden></section>
+    <footer class="foot">
+      <span class="dim">${esc(me.name)}</span>
+      <button type="button" class="link-btn" id="signout">выйти</button>
+    </footer>`;
+
+  const $ = (id) => document.getElementById(id);
+  renderTaskForm($('p-task'), status, tab, saved);
+  if (media) renderMurmurForm($('p-murmur'), status, media);
+
+  const show = (name) => {
+    current = name;
+    $('p-task').hidden = name !== 'task';
+    $('p-murmur').hidden = name !== 'murmur';
+    $('heading').textContent = name === 'murmur' ? 'В Мурмур' : 'Новая задача';
+    $app.querySelectorAll('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+    const input = $(name === 'murmur' ? 'm-title' : 'title');
+    autoGrow(input); // в скрытой панели высоту не посчитать — считаем при показе
+    input.focus();
+    input.select();
+  };
+  $app.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
+  $('open').addEventListener('click', () => { call('openApp', { tab: current === 'murmur' ? 'murmur' : undefined }); window.close(); });
+  $('theme').addEventListener('click', toggleTheme);
+  $('signout').addEventListener('click', async () => { await call('signOut'); renderSignIn(); });
+  show(current);
+}
+
 /* ---------- готово ---------- */
-function renderDone(res, assignee, me) {
-  const toPartner = assignee.uid !== me.uid;
+// heading — заголовок, title — что сохранили; taskId / openTab — куда ведёт «Открыть»;
+// undo — функция отмены (если её нет, кнопки «Отменить» не будет).
+function renderDone({ heading, title, taskId, openTab, undo }) {
   $app.innerHTML = `
     <div class="done">
       <div class="check">✓</div>
-      <h1>${toPartner ? `Поручено: ${esc(assignee.name)}` : 'Задача создана'}</h1>
-      <p class="dim">${esc(res.title)}</p>
+      <h1>${esc(heading)}</h1>
+      <p class="dim">${esc(title)}</p>
       <div class="actions">
         <button class="btn" id="open">Открыть</button>
-        <button class="btn" id="more">Ещё одну</button>
-        <button class="btn btn-ghost" id="undo">Отменить</button>
+        <button class="btn" id="more">Ещё</button>
+        ${undo ? '<button class="btn btn-ghost" id="undo">Отменить</button>' : ''}
       </div>
     </div>`;
   // Закрываемся сами, если человек не тянется к кнопкам.
   let timer = setTimeout(() => window.close(), 1800);
   $app.addEventListener('mouseenter', () => clearTimeout(timer), { once: true });
-  document.getElementById('open').onclick = () => { call('openApp', { taskId: res.id }); window.close(); };
+  document.getElementById('open').onclick = () => { call('openApp', { taskId, tab: openTab }); window.close(); };
   document.getElementById('more').onclick = () => { clearTimeout(timer); start({ blank: true }); };
-  document.getElementById('undo').onclick = async (e) => {
-    clearTimeout(timer);
-    e.target.disabled = true;
-    await call('undoTask', { id: res.id, notifId: res.notifId }).catch(() => {});
-    $app.querySelector('h1').textContent = 'Отменено';
-    timer = setTimeout(() => window.close(), 900);
-  };
+  if (undo) {
+    document.getElementById('undo').onclick = async (e) => {
+      clearTimeout(timer);
+      e.target.disabled = true;
+      await undo().catch(() => {});
+      $app.querySelector('h1').textContent = 'Отменено';
+      timer = setTimeout(() => window.close(), 900);
+    };
+  }
 }
 
 /* ---------- тема ---------- */
@@ -295,7 +426,7 @@ async function start({ blank = false } = {}) {
   try {
     const [status, tab] = await Promise.all([call('status'), readTab()]);
     if (!status.me) return renderSignIn();
-    renderForm(status, blank ? { ...tab, title: '', selection: '' } : tab, saved);
+    renderMain(status, blank ? { ...tab, title: '', selection: '', media: null } : tab, saved);
   } catch (e) {
     renderSignIn(e.message);
   }

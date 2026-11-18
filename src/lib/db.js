@@ -6,6 +6,7 @@ import {
 import { nextFutureRecurrence } from './recurrence';
 import { tsMs } from './util';
 import { buildTaskDoc, assignedNotification } from './taskDoc';
+import { buildMurmurDoc } from './murmurUtil';
 import { reportError } from './toast';
 
 // onSnapshot с понятной ошибкой вместо молча пустого экрана
@@ -339,16 +340,10 @@ export function subscribeMurmur(cb) {
 export function subscribeMurmurDone(cb) {
   return listen(query(murmurCol, where('status', '==', 'done')), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
-export async function addMurmur({ kind, title, note = '', link = '', uid, media = null }) {
-  const t = title.trim();
-  if (!t) return;
-  return addDoc(murmurCol, {
-    kind, title: t, note, link: link || null,
-    ...(media || {}),
-    addedBy: uid, wantedBy: [uid],
-    status: 'want', ratings: {}, reviews: {},
-    createdAt: serverTimestamp(), doneAt: null, doneBy: null,
-  });
+export async function addMurmur(data) {
+  const item = buildMurmurDoc(data, { serverTimestamp });
+  if (!item) return;
+  return addDoc(murmurCol, item);
 }
 export async function updateMurmur(id, patch) {
   return updateDoc(doc(db, 'murmur', id), patch);

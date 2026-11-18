@@ -6,9 +6,11 @@ import {
 } from 'firebase/auth/web-extension';
 import {
   getFirestore, collection, addDoc, deleteDoc, doc, serverTimestamp, Timestamp,
+  query, where, limit, getDocs, updateDoc, arrayUnion,
 } from 'firebase/firestore/lite';
 import { FIREBASE_PROJECT } from '../../src/firebaseConfig.js';
 import { buildTaskDoc, assignedNotification } from '../../src/lib/taskDoc.js';
+import { buildMurmurDoc } from '../../src/lib/murmurUtil.js';
 import { OAUTH_CLIENT_ID, REDIRECT_URI } from '../config.js';
 import { person, partnerOf } from './shared.js';
 
@@ -81,4 +83,49 @@ export async function createTask(data) {
 export async function undoTask(id, notifId) {
   await deleteDoc(doc(db, 'tasks', id));
   if (notifId) await deleteDoc(doc(db, 'notifications', notifId)).catch(() => {});
+}
+
+/* ---------------- Мурмур ---------------- */
+async function requireMe() {
+  const me = await getMe();
+  if (!me) throw new NotSignedIn();
+  return me;
+}
+
+// Есть ли уже такое в Мурмуре: сначала по ссылке, потом по точному названию.
+// 1–2 чтения Firestore на открытие формы на странице фильма.
+export async function findMurmur({ link, title }) {
+  await requireMe();
+  const col = collection(db, 'murmur');
+  const tries = [];
+  if (link) tries.push(query(col, where('link', '==', link), limit(1)));
+  if (title?.trim()) tries.push(query(col, where('title', '==', title.trim()), limit(1)));
+  for (const q of tries) {
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const d = snap.docs[0];
+      const x = d.data();
+      return { id: d.id, title: x.title, kind: x.kind, status: x.status, wantedBy: x.wantedBy || [] };
+    }
+  }
+  return null;
+}
+
+export async function addMurmur(data) {
+  const me = await requireMe();
+  const item = buildMurmurDoc({ ...data, uid: me.uid }, { serverTimestamp });
+  if (!item) throw new Error('Пустое название.');
+  const ref = await addDoc(collection(db, 'murmur'), item);
+  return { id: ref.id, title: item.title, kind: item.kind };
+}
+
+// «Я тоже хочу» для уже добавленного партнёром.
+export async function wantMurmur(id) {
+  const me = await requireMe();
+  await updateDoc(doc(db, 'murmur', id), { wantedBy: arrayUnion(me.uid) });
+}
+
+export async function undoMurmur(id) {
+  await requireMe();
+  await deleteDoc(doc(db, 'murmur', id));
 }
