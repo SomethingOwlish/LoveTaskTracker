@@ -1,0 +1,42 @@
+# Push-напоминания: каждые 15 минут скрипт scripts/push/send.mjs читает Firestore
+# и рассылает уведомления. Репозиторий публичный — минуты Actions бесплатные.
+# Секреты репозитория (FIREBASE_SERVICE_ACCOUNT, VAPID_PRIVATE_KEY, VAPID_PUBLIC_KEY)
+# задаёт scripts/push/setup.mjs. Пока секретов нет, скрипт просто выходит.
+# GitHub запускает расписание с задержкой до 10–20 минут — для напоминаний это нормально.
+name: Push reminders
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Только показать, что отправилось бы"
+        type: boolean
+        default: false
+
+concurrency:
+  group: push-reminders
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: scripts/push
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: scripts/push/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: node send.mjs
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}

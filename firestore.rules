@@ -44,6 +44,20 @@ service cloud.firestore {
       allow read, write: if allowed();
     }
 
+    // Подписки на push: каждый пишет только свои, рассылка читает сервисным ключом.
+    match /pushSubs/{id} {
+      allow read: if allowed();
+      allow create, update: if allowed() && request.resource.data.uid == me()
+                            && request.resource.data.endpoint is string;
+      allow delete: if allowed() && resource.data.uid == me();
+    }
+
+    // Публичный VAPID-ключ: пишет только setup-скрипт (сервисным ключом, мимо правил)
+    match /pushConfig/{id} {
+      allow read: if allowed();
+      allow write: if false;
+    }
+
     // Личное состояние: читать можно обоим, писать — только своё.
     match /userState/{uid} {
       allow read: if allowed();

@@ -45,6 +45,7 @@ export default function App() {
   const [moods, setMoods] = useState([]);
   const [moodLegends, setMoodLegends] = useState({});
   const [murmur, setMurmur] = useState([]);
+  const [pushPrefs, setPushPrefs] = useState(null);
   const [modal, setModal] = useState(null); // null | {} (new) | task (edit)
   const [showInbox, setShowInbox] = useState(false);
 
@@ -144,6 +145,7 @@ export default function App() {
     const unsub = subscribeUserState(me.uid, (st, fromServer) => {
       if (st.projectColors) setProjectColors(st.projectColors);
       if (st.notifReadAt) setReadAt((p) => Math.max(p, st.notifReadAt));
+      setPushPrefs(st.push || null);
       // разовый перенос старых локальных настроек в Firestore
       if (fromServer && !migrated) {
         migrated = true;
@@ -269,7 +271,7 @@ export default function App() {
           <ProfileView
             tasks={tasks} me={me} users={users}
             theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}
-            projectColors={projectColors} setProjectColor={setProjectColor}
+            projectColors={projectColors} setProjectColor={setProjectColor} pushPrefs={pushPrefs}
           />
         )}
         </Suspense>
