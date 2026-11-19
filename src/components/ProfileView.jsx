@@ -4,6 +4,7 @@ import { startOfToday, startOfWeek, toDate, isActive, isClosed, projectsOf } fro
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { PushSettings } from './PushSettings';
+import { StepsSettings } from './StepsSettings';
 
 // Команда в игре — грузится только когда смотрят чужой профиль.
 const GameTeamCard = lazy(() => import('./GameView').then((m) => ({ default: m.GameTeamCard })));
@@ -119,6 +120,9 @@ export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAcce
         <>
           <div className="section-title">Уведомления на телефон</div>
           <PushSettings me={me} prefs={pushPrefs} />
+
+          <div className="section-title">Шаги с iPhone</div>
+          <StepsSettings me={me} />
 
           <div className="section-title">Тема</div>
           <div className="theme-pick">

@@ -1176,3 +1176,18 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 .wish-head { display: flex; gap: 10px; }
 .wish-img { width: 56px; height: 56px; flex: none; object-fit: contain; border-radius: var(--radius-sm); background: #fff; }
 .wish-body { flex: 1; min-width: 0; }
+
+/* ---------- Шаги с iPhone ---------- */
+.steps-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.steps-day { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0; border-radius: var(--radius-sm); background: var(--bg-2); font-size: 12px; }
+.steps-day b { font-family: var(--font-mono); font-size: 12.5px; }
+.steps-day.ok { background: color-mix(in srgb, var(--accent) 16%, var(--bg-2)); }
+.steps-coins { color: var(--accent); font-size: 11px; font-weight: 700; }
+.steps-guide { padding-left: 20px; margin: 0; display: flex; flex-direction: column; gap: 12px; font-size: 14px; line-height: 1.45; }
+.steps-guide ul { padding-left: 16px; margin: 6px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.steps-copy { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+.steps-copy code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; padding: 6px 8px; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.steps-copy .btn { flex: none; }
+.steps-note { margin-top: 16px; font-size: 13px; }
+.steps-note p { margin: 0 0 8px; }
+.steps-note p:last-child { margin-bottom: 0; }

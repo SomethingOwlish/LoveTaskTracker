@@ -184,6 +184,19 @@ service cloud.firestore {
         && (request.resource.data.url == null || shortText(request.resource.data.url, 2000));
     }
 
+    // ---------- Шаги с iPhone ----------
+    // Личный ключ для Быстрых команд: id документа — сам ключ. Читать ключи
+    // может только хозяин (иначе партнёр мог бы слать шаги за него).
+    match /stepKeys/{key} {
+      allow read, delete: if allowed() && resource.data.uid == me();
+      allow create: if allowed() && request.resource.data.uid == me() && key.size() >= 20;
+    }
+    // Шаги пишет воркер сервисным ключом (мимо правил); из приложения — только чтение.
+    match /steps/{id} {
+      allow read: if allowed();
+      allow write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

@@ -13,6 +13,7 @@
 
 import { handleMedia } from './media.js';
 import { handleGacha } from './gacha.js';
+import { handleSteps } from './steps.js';
 
 const FIREBASE_HOST = 'tasktrackergando.firebaseapp.com';
 
@@ -27,6 +28,11 @@ export default {
     if (url.pathname === '/api/gacha') {
       try { return await handleGacha(request); } catch (e) {
         return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 502, headers: { 'content-type': 'application/json' } });
+      }
+    }
+    if (url.pathname === '/api/steps') {
+      try { return await handleSteps(request, env); } catch (e) {
+        return new Response(JSON.stringify({ ok: false, error: String(e.message || e) }), { status: 502, headers: { 'content-type': 'application/json' } });
       }
     }
     if (url.pathname.startsWith('/__/')) {
