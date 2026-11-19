@@ -115,7 +115,11 @@ const SKILL_ROUNDS = new Set([3, 6, 9, 12]);
 
 /* ---------------- Константы рана ---------------- */
 
-export const START_COINS = 8;
+// Стартовые монеты записываются в ран при создании: смена числа не трогает
+// уже идущую неделю (иначе потраченное ушло бы в минус). Раны без поля — 8.
+export const START_COINS = 5;
+const LEGACY_START_COINS = 8;
+export const startCoinsOf = (run) => run.startCoins ?? LEGACY_START_COINS;
 export const SHOP_SIZE = 5;
 export const BENCH_SIZE = 10;
 export const FRONT_SIZE = 4;
@@ -373,6 +377,7 @@ export function newRun(week, today = week, uid = '') {
     week,
     pack: makePack(`${uid}|${week}|pack0`, giantOf(week)),
     packRolls: 0,
+    startCoins: START_COINS,
     spent: 0,
     interest: 0,
     xpBought: 0,
@@ -406,7 +411,7 @@ export function economy(run, rewards) {
   const xp = (run.xpBought || 0) + (run.xpDaily || 0);
   const level = levelOf(xp);
   return {
-    coins: START_COINS + rewards.coins + (run.interest || 0) - (run.spent || 0),
+    coins: startCoinsOf(run) + rewards.coins + (run.interest || 0) - (run.spent || 0),
     xp, level, slots: teamSize(level), next: nextLevelXp(xp),
   };
 }

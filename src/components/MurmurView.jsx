@@ -9,8 +9,10 @@ import { Sheet, Seg, loadPref, savePref } from './Sheet';
 import { tsMs, fmtDate, toDate } from '../lib/util';
 import {
   addMurmur, updateMurmur, subscribeMurmurDone, deleteMurmur, toggleMurmurWant, rateMurmur, unwatchMurmur,
-  setMurmurSeasonWatched, setMurmurWatched,
+  setMurmurSeasonWatched, setMurmurWatched, againMurmur, startMurmur,
 } from '../lib/db';
+import { murmurTitle, wantOrder } from '../lib/murmurUtil';
+import { toast } from '../lib/toast';
 
 // Подтянуть сезоны сериала из TMDB и сохранить в запись
 async function pullSeasons(id, extId) {
@@ -42,7 +44,7 @@ export function MurmurView({ items: liveItems, me, users, userOf }) {
   // Живой список — «хотим» + недавно просмотренное. Весь архив просмотренного
   // читаем только когда открыли «Посмотрели» или «Весь список».
   const [archive, setArchive] = useState(null);
-  const needArchive = filter === 'done' || filter === 'all';
+  const needArchive = filter === 'done' || filter === 'all' || filter === 'archive';
   useEffect(() => {
     if (!needArchive) return;
     return subscribeMurmurDone(setArchive);
@@ -65,9 +67,9 @@ export function MurmurView({ items: liveItems, me, users, userOf }) {
     let r = ofKind;
     if (filter === 'want') {
       r = r.filter((x) => x.status !== 'done');
-      // сначала то, что хотят оба
-      r = [...r].sort((a, b) => (b.wantedBy?.length || 0) - (a.wantedBy?.length || 0) || tsMs(b.createdAt) - tsMs(a.createdAt));
-    } else if (filter === 'done') {
+      // сначала начатые игры, потом то, что хотят оба
+      r = [...r].sort((a, b) => wantOrder(a, b, tsMs));
+    } else if (filter === 'done' || filter === 'archive') {
       r = r.filter((x) => x.status === 'done');
       r = [...r].sort((a, b) => tsMs(b.doneAt) - tsMs(a.doneAt));
     }
@@ -139,19 +141,22 @@ export function MurmurView({ items: liveItems, me, users, userOf }) {
           {K.done}{awaiting ? ` · ждут оценки ${awaiting}` : ''}
         </button>
         <button className={`pill ${filter === 'all' ? 'on' : ''}`} onClick={() => setFilter('all')}>Весь список · {ofKind.length}</button>
+        <button className={`pill ${filter === 'archive' ? 'on' : ''}`} onClick={() => setFilter('archive')}><i className="fa-solid fa-box-archive" /> Архив</button>
         <span style={{ flex: 1 }} />
         <button className="pill" onClick={random} title="Случайный выбор"><i className="fa-solid fa-dice" /> Что выбрать?</button>
       </div>
 
-      {list.length === 0 && <div className="empty">Пусто. Впиши название в строку сверху.</div>}
+      {list.length === 0 && <div className="empty">{filter === 'archive' ? 'Архив пуст.' : 'Пусто. Впиши название в строку сверху.'}</div>}
 
-      {list.map((x) => (
+      {filter === 'archive' && list.length > 0 && <ArchiveList list={list} me={me} onOpen={setEdit} />}
+
+      {filter !== 'archive' && list.map((x) => (
         <MurmurCard key={x.id} item={x} me={me} partner={partner} userOf={userOf} K={K}
           onRate={() => setRate(x)} onEdit={() => setEdit(x)} onEpisodes={() => setEpsId(x.id)} />
       ))}
 
       {rate && <RateSheet item={rate} me={me} K={K} onClose={() => setRate(null)} />}
-      {edit && <EditSheet item={edit} onClose={() => setEdit(null)} />}
+      {edit && <EditSheet item={edit} me={me} onClose={() => setEdit(null)} />}
       {epsId && items.find((x) => x.id === epsId) && (
         <EpisodesSheet item={items.find((x) => x.id === epsId)} K={K} onClose={() => setEpsId(null)}
           onRate={() => { setRate(items.find((x) => x.id === epsId)); setEpsId(null); }} />
@@ -159,7 +164,7 @@ export function MurmurView({ items: liveItems, me, users, userOf }) {
       {pick && (
         <Sheet title="Выпало" onClose={() => setPick(null)}
           footer={<><button className="btn" onClick={random}><i className="fa-solid fa-dice" /> Ещё раз</button><button className="btn btn-accent" onClick={() => setPick(null)}>Берём!</button></>}>
-          <div className="pick-result"><i className={K.icon} /><div>{pick.title}</div>{pick.note && <p className="hint">{pick.note}</p>}</div>
+          <div className="pick-result"><i className={K.icon} /><div>{murmurTitle(pick)}</div>{pick.note && <p className="hint">{pick.note}</p>}</div>
         </Sheet>
       )}
     </div>
@@ -182,6 +187,8 @@ function MurmurCard({ item, me, partner, userOf, K, onRate, onEdit, onEpisodes }
   const scores = Object.values(item.ratings || {}).filter((v) => v != null);
   const avg = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length) : null;
   const doneAt = toDate(item.doneAt);
+  const isGame = item.kind === 'game';
+  const startedAt = toDate(item.startedAt);
 
   return (
     <div className={`task murmur ${done ? 'is-done' : ''}`} onClick={onEdit}>
@@ -189,12 +196,15 @@ function MurmurCard({ item, me, partner, userOf, K, onRate, onEdit, onEpisodes }
         {item.poster && <img className="murmur-poster" src={item.poster} alt="" loading="lazy" />}
         <div className="murmur-info">
           <div className="task-top">
-            <h3>{item.title}{item.year ? <span className="murmur-year"> · {item.year}</span> : null}</h3>
+            <h3>{item.again && <span className="murmur-again">Заново: </span>}{item.title}{item.year ? <span className="murmur-year"> · {item.year}</span> : null}</h3>
             {done && avg != null && <span className="score big">{avg.toFixed(avg % 1 ? 1 : 0)}</span>}
           </div>
           {item.overview && <p className="desc murmur-overview">{item.overview}</p>}
           {item.note && <p className="desc">{item.note}</p>}
           {prog && <SeriesProgress prog={prog} />}
+          {isGame && !done && item.startedAt && (
+            <span className="chip murmur-started"><i className="fa-solid fa-play" /> в процессе{startedAt ? ` · с ${fmtDate(startedAt)}` : ''}</span>
+          )}
         </div>
       </div>
 
@@ -206,6 +216,11 @@ function MurmurCard({ item, me, partner, userOf, K, onRate, onEdit, onEpisodes }
           </span>
           <span className="spacer" />
           {isSeries && <EpisodesButton onClick={onEpisodes} />}
+          {isGame && !item.startedAt && (
+            <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); startMurmur(item.id, me.uid).catch(reportError); }}>
+              <i className="fa-solid fa-play" /> Начали
+            </button>
+          )}
           <button className={`btn btn-sm ${iWant ? '' : 'btn-ghost'}`} onClick={(e) => { e.stopPropagation(); toggleMurmurWant(item, me.uid); }}>
             {iWant ? <><i className="fa-solid fa-heart" /> Хочу</> : <><i className="fa-regular fa-heart" /> Я тоже</>}
           </button>
@@ -243,7 +258,7 @@ function RateSheet({ item, me, K, onClose }) {
     onClose();
   };
   return (
-    <Sheet title={item.title} onClose={onClose}
+    <Sheet title={murmurTitle(item)} onClose={onClose}
       footer={<><button className="btn" onClick={onClose}>Отмена</button>
         <button className="btn btn-accent" disabled={score == null} onClick={save}>{first ? `${K.doneVerb} ✓` : 'Сохранить'}</button></>}>
       <div className="section-title" style={{ marginTop: 0 }}>Моя оценка</div>
@@ -283,7 +298,7 @@ function MediaResults({ found, onPick, hint }) {
   );
 }
 
-function EditSheet({ item, onClose }) {
+function EditSheet({ item, me, onClose }) {
   const [found, setFound] = useState(null);
   const findPoster = () => {
     setFound('loading');
@@ -315,6 +330,17 @@ function EditSheet({ item, onClose }) {
       {item.link && <p><a href={item.link} target="_blank" rel="noreferrer">Открыть ссылку <i className="fa-solid fa-arrow-up-right-from-square" /></a></p>}
       <button type="button" className="btn btn-sm" onClick={findPoster}><i className="fa-solid fa-image" /> {item.poster ? 'Сменить постер' : 'Найти постер и описание'}</button>
       {found && <MediaResults found={found} onPick={pick} />}
+      {item.kind === 'game' && item.status !== 'done' && (
+        <button type="button" className="btn btn-sm" style={{ marginLeft: 6 }}
+          onClick={() => { startMurmur(item.id, item.startedAt ? null : me.uid).catch(reportError); onClose(); }}>
+          <i className={`fa-solid ${item.startedAt ? 'fa-pause' : 'fa-play'}`} /> {item.startedAt ? 'Ещё не начали' : 'Начали'}
+        </button>
+      )}
+      {item.status === 'done' && (
+        <button type="button" className="btn btn-accent btn-block" style={{ marginTop: 10 }} onClick={() => { repeat(item, me); onClose(); }}>
+          <i className="fa-solid fa-rotate-right" /> Повторить
+        </button>
+      )}
       <div className="row" style={{ marginTop: 10 }}>
         {item.status === 'done' && (
           <button className="btn" onClick={() => { if (confirm('Вернуть в «Хотим»? Оценки сбросятся.')) { unwatchMurmur(item); onClose(); } }}>Вернуть в «Хотим»</button>
@@ -323,6 +349,43 @@ function EditSheet({ item, onClose }) {
           onClick={() => { if (confirm('Удалить из списка?')) { deleteMurmur(item.id); onClose(); } }}>Удалить</button>
       </div>
     </Sheet>
+  );
+}
+
+// «Повторить» — новая карточка «Заново …» в «Хотим»; эта остаётся в архиве с оценками.
+function repeat(item, me) {
+  againMurmur(item, me.uid).then(() => toast(`«${item.title}» — заново в «Хотим»`)).catch(reportError);
+}
+
+// Архив: компактный список всего просмотренного/пройденного, с поиском.
+function ArchiveList({ list, me, onOpen }) {
+  const [q, setQ] = useState('');
+  const shown = q.trim() ? list.filter((x) => x.title.toLowerCase().includes(q.trim().toLowerCase())) : list;
+  let lastMonth = '';
+  return (
+    <div className="murmur-archive">
+      <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Поиск по архиву · ${list.length}`} />
+      {shown.map((x) => {
+        const d = toDate(x.doneAt);
+        const month = d ? `${d.toLocaleDateString('ru-RU', { month: 'long' })} ${d.getFullYear()}` : 'без даты';
+        const head = month !== lastMonth ? month : null;
+        lastMonth = month;
+        const scores = Object.values(x.ratings || {}).filter((v) => v != null);
+        const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+        return (
+          <div key={x.id}>
+            {head && <div className="section-title">{head}</div>}
+            <div className="archive-row" role="button" tabIndex={0} onClick={() => onOpen(x)} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(x); }}>
+              <span className="archive-title">{murmurTitle(x)}{x.year ? <span className="murmur-year"> · {x.year}</span> : null}</span>
+              {d && <span className="hint archive-date">{fmtDate(d)}</span>}
+              {avg != null ? <span className="score">{avg.toFixed(avg % 1 ? 1 : 0)}</span> : <span className="score none">—</span>}
+              <button type="button" className="btn btn-sm btn-ghost" title="Повторить" aria-label="Повторить"
+                onClick={(e) => { e.stopPropagation(); repeat(x, me); }}><i className="fa-solid fa-rotate-right" /></button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

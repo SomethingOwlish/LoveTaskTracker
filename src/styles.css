@@ -1090,6 +1090,17 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 .eps-btn:disabled { opacity: .35; }
 .eps-season-head .spacer { flex: 1; }
 
+/* ---------- Вишлист ---------- */
+.wish-types { margin-bottom: 12px; }
+.wish-total { margin: 0 0 10px; }
+.wish-card { cursor: pointer; }
+.wish-card .task-top { align-items: center; }
+.wish-card .task-top h3 { overflow-wrap: anywhere; }
+.wish-card.got h3 { text-decoration: line-through; text-decoration-color: var(--text-dim); }
+.wish-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.wish-foot a.chip { text-decoration: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wish-date { font-size: 12px; }
+
 /* Доли цветов дня: полоса с перетаскиваемыми границами */
 .share-bar { position: relative; display: flex; height: 28px; margin-top: 10px; border-radius: 8px; overflow: hidden; touch-action: none; user-select: none; }
 .share-seg { flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #1a1a1a; }
@@ -1153,3 +1164,15 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 .gc-member.ok { border-color: color-mix(in srgb, var(--warn) 60%, transparent); }
 .gc-member.bad { border-color: color-mix(in srgb, var(--bad) 60%, transparent); }
 .gc-todo { margin: 0; padding-left: 18px; font-size: 14px; display: flex; flex-direction: column; gap: 3px; }
+
+/* ---------- Мурмур: начатые игры, «заново», архив ---------- */
+.murmur-again { color: var(--accent); font-weight: 700; }
+.murmur-started { margin-top: 6px; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 60%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.murmur-archive > .input { margin-bottom: 4px; }
+.archive-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.archive-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.archive-date { margin: 0; font-size: 12px; flex: none; }
+.archive-row .btn { flex: none; }
+.wish-head { display: flex; gap: 10px; }
+.wish-img { width: 56px; height: 56px; flex: none; object-fit: contain; border-radius: var(--radius-sm); background: #fff; }
+.wish-body { flex: 1; min-width: 0; }
