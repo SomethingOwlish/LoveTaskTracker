@@ -300,8 +300,10 @@ export function isOnTime(t) {
   return !due || dayStr(new Date(done)) <= dayStr(new Date(due));
 }
 
-// Награда за задачу по прежним правилам (до ноября 2026) — только для переноса
-// баланса старых ранов, см. carryFor.
+// Награда за задачу по прежним правилам. Неделя, на которой правила
+// сменились, считается по лучшему из двух: часть монет уже потрачена по
+// старым ценам, и баланс не должен уйти в минус. Без хранимого состояния —
+// поэтому не ломается от гонок сохранений и пересчётов.
 export function legacyTaskReward(t) {
   const imp = t.priorityMatrix?.importance ?? 0;
   const urg = t.priorityMatrix?.urgency ?? 0;
@@ -316,21 +318,15 @@ function closedBy(tasks, uid, since) {
     && msOf(t.completedAt) >= since);
 }
 
-// Ран начат при старых правилах: задачи тогда стоили дороже, и часть монет
-// уже потрачена. Чтобы баланс не ушёл в минус (и новые монеты не гасили
-// невидимый долг), разницу один раз переносим в run.carry.
-export const RULES_V = 2;
-export function carryFor(tasks, uid, from, rewards) {
-  const old = closedBy(tasks, uid, from.getTime()).reduce((n, t) => n + legacyTaskReward(t), 0);
-  return Math.max(0, old - rewards.coins);
-}
+export const NEW_RULES_WEEK = '2026-11-23'; // с этой недели — только новые правила
 
 export function rewardsFor({ tasks = [], moods = [], media = [], tx = [] }, uid, from) {
   const since = from.getTime();
   const fromKey = dayStr(from);
 
+  const legacy = fromKey < NEW_RULES_WEEK;
   const list = closedBy(tasks, uid, since).map((t) => ({
-    id: t.id, title: t.title, at: msOf(t.completedAt), coins: taskReward(t), items: (t.checklist || []).length, onTime: isOnTime(t),
+    id: t.id, title: t.title, at: msOf(t.completedAt), coins: legacy ? Math.max(taskReward(t), legacyTaskReward(t)) : taskReward(t), items: (t.checklist || []).length, onTime: isOnTime(t),
   }));
   list.sort((a, b) => b.at - a.at);
   const taskCoins = list.reduce((n, x) => n + x.coins, 0);
@@ -374,7 +370,6 @@ const newUid = () => `${Date.now().toString(36)}${(uidCounter++).toString(36)}${
 export function newRun(week, today = week, uid = '') {
   return {
     v: 3,
-    rulesV: RULES_V,
     week,
     pack: makePack(`${uid}|${week}|pack0`, giantOf(week)),
     packRolls: 0,
@@ -411,7 +406,7 @@ export function economy(run, rewards) {
   const xp = (run.xpBought || 0) + (run.xpDaily || 0);
   const level = levelOf(xp);
   return {
-    coins: START_COINS + rewards.coins + (run.interest || 0) + (run.carry || 0) - (run.spent || 0),
+    coins: START_COINS + rewards.coins + (run.interest || 0) - (run.spent || 0),
     xp, level, slots: teamSize(level), next: nextLevelXp(xp),
   };
 }
