@@ -5,10 +5,10 @@ import { toast, reportError } from '../lib/toast';
 import { Sheet } from './Sheet';
 import { Avatar } from './Avatar';
 import {
-  SPECIES, BY_ID, GIANTS, ELEMENTS, CLASSES, FAMILIES, REGIONS, SKILLS, SIZE_BONUS, RARITY, PLACE,
+  SPECIES, BY_ID, GIANTS, ELEMENTS, CLASSES, FAMILIES, REGIONS, SKILLS, RARITY, PLACE,
   FRONT_SIZE, BACK_SIZE, BENCH_SIZE, REROLL_COST, XP_BUY, GIANT_HP, LEVEL_XP, DAILY_XP, MAX_STARS, MISPLACED,
-  newRun, normalizeRun, START_COINS, makePack, repack, isFresh, economy, rewardsFor, ensureShop, buy, sell, move, reroll, buyXp,
-  teamOf, bonds, sizeBonus, tick, interestFor, simulateRaid, giantOf, weekKey, weekStart, dayStr, dayIndex,
+  newRun, normalizeRun, START_COINS, RULES_V, carryFor, makePack, repack, isFresh, economy, rewardsFor, ensureShop, buy, sell, move, reroll, buyXp,
+  teamOf, bonds, tick, interestFor, simulateRaid, giantOf, weekKey, weekStart, dayStr, dayIndex,
   unitCost, offerCost, oddsFor, battleHp, statsOf, imgOf, formOf, placeOf, fits, isWeekend, ENGINE_V,
   fightCost, fightsOn, giantPower,
 } from '../game/engine';
@@ -91,20 +91,11 @@ function UnitTile({ unit, row, selected, target, dim, onClick, kid, compact }) {
 function Bonds({ units, giant }) {
   const list = bonds(units);
   const [allOff, setAllOff] = useState(false);
-  const size = sizeBonus(units.length);
-  const nextSize = SIZE_BONUS.find((b) => b.n > units.length);
   const on = list.filter((b) => b.tier).sort((a, b) => b.tier - a.tier || b.n - a.n);
   const off = list.filter((b) => !b.tier).sort((a, b) => (b.n / b.def.steps[0]) - (a.n / a.def.steps[0]));
   if (!list.length) return <p className="hint">Связи появятся, когда в команде соберутся особи с общей стихией, классом, семейством или регионом.</p>;
   return (
     <div className="pm-bonds">
-      {/* размер команды — только когда бонус включён или до «Стаи» осталось две особи */}
-      {(size || units.length >= SIZE_BONUS[0].n - 2) && <div className={`pm-bond size ${size ? 'on' : ''}`}>
-        <i className="fa-solid fa-people-group" />
-        <b>{size ? size.name : 'Размер команды'}</b>
-        <span className="pm-steps">{SIZE_BONUS.map((b) => <i key={b.n} className={units.length >= b.n ? 'on' : ''}>{b.n}</i>)}</span>
-        <span className="pm-bond-text">{size ? size.text : ''}{nextSize ? `${size ? ' · ' : ''}с ${nextSize.n}: ${nextSize.text}` : ''}</span>
-      </div>}
       {on.map((x) => (
         <div key={x.kind + x.key} className="pm-bond on">
           <i className={`fa-solid ${x.def.icon}`} style={x.def.color ? { color: x.def.color } : undefined} />
@@ -395,6 +386,14 @@ export function GameView({ tasks, me, users }) {
   useEffect(() => {
     if (current && stored.v !== 3) saveGame(me.uid, upgradeRun(stored, me.uid)).catch(reportError);
   }, [current, stored?.v]);
+
+  // Ран начат при старых правилах наград — один раз переносим разницу,
+  // чтобы потраченное по старым ценам не съедало новые монеты.
+  useEffect(() => {
+    if (!current || !sourcesReady || !tasks.length || stored.rulesV === RULES_V) return;
+    const carry = carryFor(tasks, me.uid, weekStart(), rewards);
+    saveGame(me.uid, { ...upgradeRun(stored, me.uid), rulesV: RULES_V, carry }).catch(reportError);
+  }, [current, sourcesReady, tasks.length, stored?.rulesV]);
 
   // Новый день — проценты с накоплений и опыт.
   useEffect(() => {
@@ -700,12 +699,13 @@ export function GameView({ tasks, me, users }) {
             <div className="stat"><div className="n">{run.interest || 0}</div><div className="l">проценты</div></div>
             <div className="stat"><div className="n">{run.spent || 0}</div><div className="l">потрачено</div></div>
           </div>
+          {run.carry > 0 && <div className="pm-income"><span><i className="fa-solid fa-scale-balanced" /> Перенос со старых правил</span><b><i className="fa-solid fa-coins" /> {run.carry}</b></div>}
           <div className="pm-income"><span><i className="fa-solid fa-list-check" /> Задачи <span className="dim">· {rewards.list.length}</span></span><b><i className="fa-solid fa-coins" /> {rewards.tasks}</b></div>
           <div className="pm-income"><span><i className="fa-solid fa-face-smile" /> Настроение <span className="dim">· {rewards.mood.days} из 7 дней{rewards.mood.pairDays ? `, вместе ${rewards.mood.pairDays}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.mood.coins}</b></div>
           <div className="pm-income"><span><i className="fa-solid fa-film" /> Мурмур <span className="dim">· {rewards.media.list.length}{rewards.media.episodes ? `, серий ${rewards.media.episodes}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.media.coins}</b></div>
           <div className="pm-income"><span><i className="fa-solid fa-wallet" /> Бюджет <span className="dim">· {rewards.budget.days} дн.{rewards.budget.receipts ? `, чеков ${rewards.budget.receipts}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.budget.coins}</b></div>
           <p className="hint">
-            Задача — 1 монета, с подзадачами — монета за каждую подзадачу; важная или срочная — ещё +2; закрыта днём раньше срока — ещё +1.
+            Задача — 1 монета, с подзадачами — монета за каждую подзадачу; важная или срочная — ещё +2; закрыта в срок — ещё +1.
             Настроение — 1 за каждый отмеченный день, +1, если отмечена вся неделя, и +2 за день, когда отметились оба.
             Мурмур: фильм или досмотренный сериал — 1, пройденная игра — 10, серия — ½ (за неделю вниз), свой отзыв — ещё +1.
             День, когда что-то внесено в бюджет, — 1; разобранный чек — ещё +1.
@@ -715,7 +715,7 @@ export function GameView({ tasks, me, users }) {
           {rewards.list.length === 0 && <div className="empty">На этой неделе задач пока не закрыто.</div>}
           {rewards.list.map((r) => (
             <div key={r.id} className="pm-income">
-              <span>{r.title}{r.items ? <span className="dim"> · {r.items} подзадач</span> : null}{r.early ? <span className="dim"> · раньше срока</span> : null}</span>
+              <span>{r.title}{r.items ? <span className="dim"> · {r.items} подзадач</span> : null}{r.onTime ? <span className="dim"> · в срок</span> : null}</span>
               <b><i className="fa-solid fa-coins" /> {r.coins}</b>
             </div>
           ))}

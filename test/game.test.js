@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  SPECIES, BY_ID, GIANTS, RARITY, newRun, economy, rewardsFor, taskReward, ensureShop, buy, sell, move, mergeAll,
+  SPECIES, BY_ID, GIANTS, RARITY, newRun, economy, rewardsFor, taskReward, carryFor, ensureShop, buy, sell, move, mergeAll,
   simulateRaid, giantOf, levelOf, teamSize, tick, START_COINS, BENCH_SIZE, BACK_SIZE, MAX_TEAM, reroll, bonds,
-  fightCost, makePack, repack, rollShop, statsOf, placeOf, fits, normalizeRun, sizeBonus, PACK_SIZE,
+  fightCost, makePack, repack, rollShop, statsOf, placeOf, fits, normalizeRun, PACK_SIZE,
 } from '../src/game/engine.js';
 
 const NONE = { coins: 0 };
@@ -19,12 +19,27 @@ describe('награды', () => {
     expect(taskReward({ priorityMatrix: { importance: 5, urgency: 2 }, checklist: [1, 2, 3, 4, 5] })).toBe(7);
     expect(taskReward({ priorityMatrix: { importance: -2, urgency: -1 } })).toBe(1);
   });
-  it('закрыта днём раньше срока — +1', () => {
+  it('закрыта в срок — +1, в том числе в день срока', () => {
     const d = (day, h) => new Date(2026, 10, day, h);
     expect(taskReward({ completedAt: d(17, 10), deadline: d(18, 23) })).toBe(2);
-    expect(taskReward({ completedAt: d(18, 10), deadline: d(18, 23) })).toBe(1);
+    expect(taskReward({ completedAt: d(18, 23), deadline: d(18, 23) })).toBe(2);
     expect(taskReward({ completedAt: d(19, 10), deadline: d(18, 23) })).toBe(1);
-    expect(taskReward({ completedAt: d(17, 10) })).toBe(1);
+    expect(taskReward({ completedAt: d(17, 10) })).toBe(2);
+  });
+  it('перенос баланса со старых правил', () => {
+    const from = new Date(2026, 10, 16);
+    const at = { toMillis: () => new Date(2026, 10, 17).getTime() };
+    const tasks = [
+      { id: 'a', assigneeUid: 'me', status: 'done', completedAt: at, checklist: [1, 2, 3], priorityMatrix: { importance: 4, urgency: 1 } },
+      { id: 'b', assigneeUid: 'me', status: 'done', completedAt: at },
+    ];
+    const r = rewardsFor({ tasks }, 'me', from);
+    // по новым: a = 3 строки + 2 важная + 1 в срок, b = 1 + 1 в срок
+    expect(r.coins).toBe(6 + 2);
+    // по старым: a = 3 + 2 (половина важности) + 1 срочная, b = 2
+    expect(carryFor(tasks, 'me', from, { coins: 5 })).toBe(8 - 5);
+    expect(carryFor(tasks, 'me', from, r)).toBe(0);
+    expect(carryFor(tasks, 'me', from, { coins: 100 })).toBe(0);
   });
   const from = new Date(2026, 10, 16);
   const at = (d, h = 12) => ({ toMillis: () => new Date(2026, 10, d, h).getTime() });
@@ -35,10 +50,12 @@ describe('награды', () => {
       { id: 'c', assigneeUid: 'me', status: 'done', completedAt: at(10) },
       { id: 'd', assigneeUid: 'you', status: 'done', completedAt: at(17) },
       { id: 'e', assigneeUid: 'me', status: 'open' },
+      { id: 'f', assigneeUid: 'you', completedBy: 'me', status: 'done', completedAt: at(19), recurrence: 'daily', checklist: [{ done: true }, { done: true }] },
+      { id: 'g', assigneeUid: 'me', completedBy: 'you', status: 'done', completedAt: at(19) },
     ];
     const r = rewardsFor({ tasks }, 'me', from);
-    expect(r.coins).toBe(4);
-    expect(r.list.map((x) => x.id)).toEqual(['b', 'a']);
+    expect(r.coins).toBe(4 + 2 + 3); // +1 «в срок» каждой: срока нет
+    expect(r.list.map((x) => x.id)).toEqual(['f', 'b', 'a']);
   });
   it('настроение — монета за день и +1 за всю неделю', () => {
     const mood = (uid, day) => ({ uid, day: `2026-11-${day}` });
@@ -218,11 +235,6 @@ describe('связи', () => {
     const b = bonds(fire);
     expect(b.find((x) => x.kind === 'el' && x.key === 'fire').tier).toBe(3);
     expect(new Set(b.map((x) => x.kind))).toEqual(new Set(['el', 'cl', 'fam', 'reg']));
-  });
-  it('бонус размера команды с девяти', () => {
-    expect(sizeBonus(8)).toBeNull();
-    expect(sizeBonus(9).name).toBe('Стая');
-    expect(sizeBonus(11).name).toBe('Великая стая');
   });
 });
 
