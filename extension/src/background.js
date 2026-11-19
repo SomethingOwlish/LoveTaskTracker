@@ -115,7 +115,7 @@ async function murmurFromPage(tab) {
     if (!media) return notify('Не нашла фильм, сериал или игру', 'Открой страницу самого фильма или игры и попробуй ещё раз.');
 
     const { me } = await getStatus();
-    const ex = await findMurmur({ link: media.link, title: media.title });
+    const ex = await findMurmur({ link: media.link, title: media.title, year: media.year, kind: media.kind });
     if (ex?.status === 'done') return notify('Уже в архиве Мурмура', ex.title);
     if (ex && ex.wantedBy.includes(me?.uid)) return notify('Уже в «Хотим»', ex.title);
     if (ex) {
@@ -209,7 +209,7 @@ const handlers = {
   createTask: ({ data }) => createTask(data),
   undoTask: ({ id, notifId }) => undoTask(id, notifId),
   openApp: ({ taskId, tab }) => openApp(taskId, tab),
-  findMurmur: ({ link, title }) => findMurmur({ link, title }),
+  findMurmur: ({ link, title, year, kind, extId }) => findMurmur({ link, title, year, kind, extId }),
   addMurmur: ({ data }) => addMurmur(data),
   wantMurmur: ({ id }) => wantMurmur(id),
   undoMurmur: ({ id }) => undoMurmur(id),

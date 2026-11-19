@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { againDoc, murmurTitle, wantOrder } from '../src/lib/murmurUtil.js';
+import { againDoc, murmurTitle, wantOrder, sameMurmur } from '../src/lib/murmurUtil.js';
 
 const ts = () => 'TS';
 describe('Мурмур: повторить', () => {
@@ -23,5 +23,27 @@ describe('Мурмур: повторить', () => {
       { id: 'new', createdAt: 3 }, { id: 'both', wantedBy: [1, 2], createdAt: 1 }, { id: 'started', startedAt: 2, createdAt: 0 },
     ];
     expect([...list].sort((a, b) => wantOrder(a, b, ms)).map((x) => x.id)).toEqual(['started', 'both', 'new']);
+  });
+});
+
+describe('Мурмур: та же ли это запись', () => {
+  const dune84 = { kind: 'movie', title: 'Дюна', year: 1984 };
+  it('ремейк с тем же названием — другая запись', () => {
+    expect(sameMurmur({ kind: 'movie', title: 'Дюна', year: 2021 }, dune84)).toBe(false);
+  });
+  it('название + год + тип совпали — та же (год строкой из поиска, регистр, ё)', () => {
+    expect(sameMurmur({ kind: 'movie', title: 'дюна ', year: '1984' }, dune84)).toBe(true);
+    expect(sameMurmur({ kind: 'movie', title: 'Ёлки', year: 2010 }, { kind: 'movie', title: 'Елки', year: 2010 })).toBe(true);
+  });
+  it('фильм и сериал с одним названием — разные', () => {
+    expect(sameMurmur({ kind: 'series', title: 'Дюна', year: 1984 }, dune84)).toBe(false);
+  });
+  it('без года не считаем дублем', () => {
+    expect(sameMurmur({ kind: 'movie', title: 'Дюна', year: null }, dune84)).toBe(false);
+    expect(sameMurmur({ kind: 'movie', title: 'Дюна' }, { kind: 'movie', title: 'Дюна' })).toBe(false);
+  });
+  it('ID базы решает за всех', () => {
+    expect(sameMurmur({ extId: 'tmdb:movie:1', kind: 'movie', title: 'А', year: 1 }, { extId: 'tmdb:movie:1', kind: 'movie', title: 'Б', year: 2 })).toBe(true);
+    expect(sameMurmur({ extId: 'tmdb:movie:1', ...dune84 }, { extId: 'tmdb:movie:2', ...dune84 })).toBe(false);
   });
 });

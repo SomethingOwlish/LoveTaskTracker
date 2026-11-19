@@ -286,25 +286,37 @@ function renderMurmurForm($panel, { me, partner }, media) {
     if (!b) return;
     s.kind = b.dataset.kind;
     $('kinds').querySelectorAll('[data-kind]').forEach((x) => x.classList.toggle('on', x === b));
+    checkDupe(); // фильм и сериал с одним названием — разные записи
   });
 
   // Уже есть в списке? Тогда вместо «добавить» — «я тоже хочу» или просто сообщаем.
-  call('findMurmur', { link: media.link, title: media.title }).then((ex) => {
-    if (!ex) return;
-    s.existing = ex;
-    const dupe = $('dupe');
-    const done = ex.status === 'done';
-    const iWant = ex.wantedBy.includes(me.uid);
-    const others = ex.wantedBy.filter((u) => u !== me.uid).length && partner ? partner.name : '';
-    dupe.hidden = false;
-    dupe.textContent = done
-      ? `Уже ${ex.kind === 'game' ? 'прошли' : 'посмотрели'} — «${ex.title}» в архиве Мурмура.`
-      : iWant ? `Уже в «Хотим»${others ? ` — и ${others} тоже хочет` : ''}.`
-        : `«${ex.title}» уже в «Хотим»${others ? ` — хочет ${others}` : ''}.`;
+  // Сверяем по ссылке, иначе по названию + году + типу.
+  let checkN = 0;
+  const checkDupe = () => {
+    const n = ++checkN;
+    s.existing = null;
+    $('dupe').hidden = true;
     const btn = $('m-save');
-    if (done || iWant) { btn.disabled = true; btn.textContent = 'Уже в списке'; }
-    else { btn.innerHTML = '♥ Я тоже хочу <kbd>↵</kbd>'; }
-  }).catch(() => { /* проверка не удалась — просто даём добавить */ });
+    btn.disabled = false;
+    btn.innerHTML = '＋ В Мурмур <kbd>↵</kbd>';
+    call('findMurmur', { link: s.kind === media.kind ? media.link : null, title: media.title, year: media.year, kind: s.kind }).then((ex) => {
+      if (!ex || n !== checkN) return;
+      s.existing = ex;
+      const dupe = $('dupe');
+      const done = ex.status === 'done';
+      const iWant = ex.wantedBy.includes(me.uid);
+      const others = ex.wantedBy.filter((u) => u !== me.uid).length && partner ? partner.name : '';
+      dupe.hidden = false;
+      dupe.textContent = done
+        ? `Уже ${ex.kind === 'game' ? 'прошли' : 'посмотрели'} — «${ex.title}» в архиве Мурмура.`
+        : iWant ? `Уже в «Хотим»${others ? ` — и ${others} тоже хочет` : ''}.`
+          : `«${ex.title}» уже в «Хотим»${others ? ` — хочет ${others}` : ''}.`;
+      const btn = $('m-save');
+      if (done || iWant) { btn.disabled = true; btn.textContent = 'Уже в списке'; }
+      else { btn.innerHTML = '♥ Я тоже хочу <kbd>↵</kbd>'; }
+    }).catch(() => { /* проверка не удалась — просто даём добавить */ });
+  };
+  checkDupe();
 
   $('m').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('m').requestSubmit(); }

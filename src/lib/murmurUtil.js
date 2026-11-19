@@ -36,6 +36,22 @@ export function againDoc(item, uid, { serverTimestamp }) {
   };
 }
 
+// Та же ли это вещь, что уже лежит в Мурмуре? Ремейки и одноимённые сериалы —
+// разные записи, поэтому одного названия мало:
+// 1) есть ID базы (extId вида «tmdb:movie:123») у обоих — решает он;
+// 2) иначе название + год + тип (фильм / сериал / игра). Год без него —
+//    не совпадение: лучше редкий дубль, чем ремейк, который нельзя добавить.
+const normTitle = (t) => String(t || '').trim().toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ');
+const normYear = (y) => { const n = parseInt(y, 10); return Number.isFinite(n) ? n : null; };
+export function sameMurmur(item, cand) {
+  if (!item || !cand) return false;
+  if (item.extId && cand.extId) return item.extId === cand.extId;
+  if (item.kind !== cand.kind) return false;
+  if (normTitle(item.title) !== normTitle(cand.title)) return false;
+  const a = normYear(item.year), b = normYear(cand.year);
+  return a != null && a === b;
+}
+
 // Заголовок карточки: «Заново» перед названием у повтора.
 export const murmurTitle = (item) => (item.again ? `Заново: ${item.title}` : item.title);
 
