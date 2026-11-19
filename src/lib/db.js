@@ -311,7 +311,9 @@ export async function deleteCalEvent(id) {
 
 /* ---------------- Настроение ---------------- */
 // moodLegends/{uid} = { items: [{id, color, label}] } — у каждого своя легенда.
-// moods/{uid}_{YYYY-MM-DD} = { uid, day, itemId, color, label, note }
+// moods/{uid}_{YYYY-MM-DD} = { uid, day, items: [{itemId, color, label}], note,
+//   itemId, color, label } — несколько цветов за день; верхние itemId/color/label
+//   дублируют первый цвет для старых версий приложения и старых записей.
 // Отметки за диапазон дней (ключи YYYY-MM-DD сравниваются как строки).
 export function subscribeMoods(fromKey, toKey, cb) {
   const q = query(collection(db, 'moods'), where('day', '>=', fromKey), where('day', '<=', toKey));
@@ -327,11 +329,21 @@ export function subscribeMoodLegends(cb) {
 export async function saveMoodLegend(uid, items) {
   return setDoc(doc(db, 'moodLegends', uid), { items, updatedAt: serverTimestamp() });
 }
-export async function setMood(uid, day, item, note = '') {
-  return setDoc(doc(db, 'moods', `${uid}_${day}`), {
-    uid, day, itemId: item.id, color: item.color, label: item.label, note: note || '',
+// items — выбранные пункты [{itemId, color, label}]; пустой список снимает отметку.
+export async function setMood(uid, day, items, note = '') {
+  const ref = doc(db, 'moods', `${uid}_${day}`);
+  if (!items.length) return deleteDoc(ref);
+  const [first] = items;
+  return setDoc(ref, {
+    uid, day, items, itemId: first.itemId, color: first.color, label: first.label, note: note || '',
     updatedAt: serverTimestamp(),
   });
+}
+// Своя отметка за день; второй аргумент колбэка — пришёл ли ответ сервера
+// (до него пустой кэш ещё не значит «не отмечено»).
+export function subscribeMyMood(uid, day, cb) {
+  return onSnapshot(doc(db, 'moods', `${uid}_${day}`), { includeMetadataChanges: true },
+    (s) => cb(s.exists() ? s.data() : null, !s.metadata.fromCache), (e) => reportError(e));
 }
 export async function setMoodNote(uid, day, note) {
   return updateDoc(doc(db, 'moods', `${uid}_${day}`), { note, updatedAt: serverTimestamp() });
