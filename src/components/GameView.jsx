@@ -4,16 +4,36 @@ import { toast, reportError } from '../lib/toast';
 import { Sheet } from './Sheet';
 import { Avatar } from './Avatar';
 import {
-  SPECIES, BY_ID, GIANTS, ELEMENTS, CLASSES, RARITY, FRONT_SIZE, BACK_SIZE, BENCH_SIZE, REROLL_COST, XP_BUY,
-  GIANT_HP, LEVEL_XP, EL_STEPS, CL_STEPS, DAILY_XP,
-  newRun, economy, rewardsFor, ensureShop, buy, sell, move, reroll, buyXp, teamOf, bonds, tick, interestFor,
-  simulateRaid, giantOf, weekKey, weekStart, dayStr, dayIndex, unitCost, oddsFor, battleHp, ENGINE_V,
+  SPECIES, BY_ID, GIANTS, ELEMENTS, CLASSES, FAMILIES, REGIONS, SKILLS, SIZE_BONUS, RARITY, PLACE,
+  FRONT_SIZE, BACK_SIZE, BENCH_SIZE, REROLL_COST, XP_BUY, GIANT_HP, LEVEL_XP, DAILY_XP, MAX_STARS, MISPLACED,
+  newRun, normalizeRun, makePack, repack, isFresh, economy, rewardsFor, ensureShop, buy, sell, move, reroll, buyXp,
+  teamOf, bonds, sizeBonus, tick, interestFor, simulateRaid, giantOf, weekKey, weekStart, dayStr, dayIndex,
+  unitCost, offerCost, oddsFor, battleHp, statsOf, imgOf, formOf, placeOf, fits, isWeekend, ENGINE_V,
   fightCost, fightsOn, giantPower,
 } from '../game/engine';
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
-const STARS = (n) => '★'.repeat(n);
 const pct = (d) => Math.min(100, Math.round((d / GIANT_HP) * 1000) / 10);
+const KIND_DEFS = { el: ELEMENTS, cl: CLASSES, fam: FAMILIES, reg: REGIONS };
+const KIND_NAMES = { el: 'стихия', cl: 'класс', fam: 'семейство', reg: 'регион' };
+const PLACE_ICON = { front: 'fa-person-rifle', back: 'fa-hand-holding-heart', both: 'fa-arrows-up-down' };
+
+function Stars({ n }) {
+  if (n <= 3) return <span className="pm-stars">{'★'.repeat(n)}</span>;
+  return <span className="pm-stars awake">★{n}</span>;
+}
+
+// Приводит сохранённый ран к текущей версии: старые размеры, лавка, набор.
+function upgradeRun(stored, uid) {
+  if (stored.v === 3) return normalizeRun(stored);
+  return normalizeRun({
+    ...stored,
+    v: 3,
+    pack: stored.pack || makePack(`${uid}|${stored.week}|pack0`, giantOf(stored.week)),
+    packRolls: stored.packRolls || 0,
+    shop: null,
+  });
+}
 
 /* ---------- Мелкие куски ---------- */
 
@@ -22,10 +42,10 @@ function Portrait({ id, st = 1, size = 56 }) {
   const [broken, setBroken] = useState(false);
   const el = ELEMENTS[sp.el];
   return (
-    <div className="pm-portrait" style={{ width: size, height: size, '--el': el.color }}>
+    <div className={`pm-portrait ${st > 3 ? 'awake' : ''}`} style={{ width: size, height: size, '--el': el.color }}>
       {broken
         ? <i className={`fa-solid ${el.icon}`} />
-        : <img src={sp.img[st - 1]} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setBroken(true)} />}
+        : <img src={imgOf(sp, st)} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setBroken(true)} />}
     </div>
   );
 }
@@ -42,58 +62,69 @@ function GiantEmblem({ giant, size = 72 }) {
   );
 }
 
-function UnitTile({ unit, selected, target, dim, onClick, kid }) {
+function UnitTile({ unit, row, selected, target, dim, onClick, kid, compact }) {
   if (!unit) {
     return <button type="button" className={`pm-slot empty ${target ? 'target' : ''} ${dim ? 'dim' : ''}`} onClick={onClick} aria-label="Пустое место" />;
   }
   const sp = BY_ID[unit.s];
+  const wrong = row && !fits(sp, row);
   return (
-    <button type="button" className={`pm-slot ${selected ? 'sel' : ''} rar-${sp.rar}`} onClick={onClick}>
+    <button type="button" className={`pm-slot ${selected ? 'sel' : ''} rar-${sp.rar} ${wrong ? 'wrong' : ''}`} onClick={onClick}
+      title={wrong ? `${sp.name}: место — ${PLACE[placeOf(sp)]}, здесь работает на ${MISPLACED * 100}%` : sp.name}>
       {kid && <em className="pm-badge kid" title="Дитя гиганта: он его не бьёт, но гнев растёт быстрее">дитя</em>}
-      <Portrait id={unit.s} st={unit.st} size={44} />
-      <span className="pm-stars">{STARS(unit.st)}</span>
-      <span className="pm-name">{sp.name}</span>
-      <span className="pm-tags">
-        <i className={`fa-solid ${ELEMENTS[sp.el].icon}`} style={{ color: ELEMENTS[sp.el].color }} />
-        <i className={`fa-solid ${CLASSES[sp.cls].icon}`} />
-      </span>
+      {wrong && <em className="pm-badge wrongb" title="Не на своём месте"><i className="fa-solid fa-triangle-exclamation" /></em>}
+      <Portrait id={unit.s} st={unit.st} size={compact ? 34 : 44} />
+      <Stars n={unit.st} />
+      {!compact && <span className="pm-name">{sp.name}</span>}
+      {!compact && (
+        <span className="pm-tags">
+          <i className={`fa-solid ${ELEMENTS[sp.el].icon}`} style={{ color: ELEMENTS[sp.el].color }} />
+          <i className={`fa-solid ${CLASSES[sp.cls].icon}`} />
+          <i className={`fa-solid ${PLACE_ICON[placeOf(sp)]}`} title={PLACE[placeOf(sp)]} />
+        </span>
+      )}
     </button>
   );
 }
 
 function Bonds({ units, giant }) {
-  const { el, cl, elTier, clTier } = bonds(units);
-  const items = [
-    ...Object.entries(el).map(([k, n]) => ({
-      k, n, tier: elTier[k], steps: EL_STEPS, icon: ELEMENTS[k].icon, color: ELEMENTS[k].color, name: ELEMENTS[k].name,
-      text: elTier[k] ? ELEMENTS[k].tiers[elTier[k] - 1] : `с ${EL_STEPS[0]}: ${ELEMENTS[k].tiers[0]}`, weak: k === giant.weak,
-    })),
-    ...Object.entries(cl).map(([k, n]) => ({
-      k, n, tier: clTier[k], steps: CL_STEPS, icon: CLASSES[k].icon, name: CLASSES[k].name,
-      text: clTier[k] ? CLASSES[k].tiers[clTier[k] - 1] : `с ${CL_STEPS[0]}: ${CLASSES[k].tiers[0]}`,
-    })),
-  ].sort((a, b) => b.tier - a.tier || b.n - a.n);
-  if (!items.length) return <p className="hint">Связи появятся, когда в команде будет по две особи одной стихии или класса.</p>;
-  const on = items.filter((x) => x.tier);
-  const off = items.filter((x) => !x.tier);
+  const list = bonds(units);
+  const [allOff, setAllOff] = useState(false);
+  const size = sizeBonus(units.length);
+  const nextSize = SIZE_BONUS.find((b) => b.n > units.length);
+  const on = list.filter((b) => b.tier).sort((a, b) => b.tier - a.tier || b.n - a.n);
+  const off = list.filter((b) => !b.tier).sort((a, b) => (b.n / b.def.steps[0]) - (a.n / a.def.steps[0]));
+  if (!list.length) return <p className="hint">Связи появятся, когда в команде соберутся особи с общей стихией, классом, семейством или регионом.</p>;
   return (
     <div className="pm-bonds">
+      <div className={`pm-bond size ${size ? 'on' : ''}`}>
+        <i className="fa-solid fa-people-group" />
+        <b>{size ? size.name : 'Размер команды'}</b>
+        <span className="pm-steps">{SIZE_BONUS.map((b) => <i key={b.n} className={units.length >= b.n ? 'on' : ''}>{b.n}</i>)}</span>
+        <span className="pm-bond-text">{size ? size.text : ''}{nextSize ? `${size ? ' · ' : ''}с ${nextSize.n}: ${nextSize.text}` : ''}</span>
+      </div>
       {on.map((x) => (
-        <div key={x.k} className="pm-bond on">
-          <i className={`fa-solid ${x.icon}`} style={x.color ? { color: x.color } : undefined} />
-          <b>{x.name}</b>
-          <span className="pm-steps">{x.steps.map((s) => <i key={s} className={x.n >= s ? 'on' : ''}>{s}</i>)}</span>
-          {x.weak && <em className="pm-weak">слабость гиганта</em>}
-          <span className="pm-bond-text">{x.text}</span>
+        <div key={x.kind + x.key} className="pm-bond on">
+          <i className={`fa-solid ${x.def.icon}`} style={x.def.color ? { color: x.def.color } : undefined} />
+          <b>{x.def.name}</b>
+          <span className="pm-steps">{x.def.steps.map((s) => <i key={s} className={x.n >= s ? 'on' : ''}>{s}</i>)}</span>
+          {x.kind === 'el' && x.key === giant.weak && <em className="pm-weak">слабость гиганта</em>}
+          <span className="pm-bond-text"><span className="dim">{KIND_NAMES[x.kind]}:</span> {x.def.text(x.value)}</span>
         </div>
       ))}
       {off.length > 0 && (
         <div className="pm-bond-off">
-          {off.map((x) => (
-            <span key={x.k} className={x.weak ? 'weak' : ''} title={x.text}>
-              <i className={`fa-solid ${x.icon}`} style={x.color ? { color: x.color } : undefined} /> {x.n}/{x.steps[0]}
+          {/* ближние к включению — первыми */}
+          {(allOff ? off : off.slice(0, 6)).map((x) => (
+            <span key={x.kind + x.key} className={x.kind === 'el' && x.key === giant.weak ? 'weak' : ''} title={`${x.def.name} — с ${x.def.steps[0]}: ${x.def.text(x.def.v[0])}`}>
+              <i className={`fa-solid ${x.def.icon}`} style={x.def.color ? { color: x.def.color } : undefined} /> {x.n}/{x.def.steps[0]}
             </span>
           ))}
+          {off.length > 6 && (
+            <button type="button" className="pm-link" onClick={() => setAllOff((v) => !v)}>
+              {allOff ? 'свернуть' : `ещё ${off.length - 6}`}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -101,7 +132,7 @@ function Bonds({ units, giant }) {
 }
 
 function StatRow({ sp, st }) {
-  const [atk, def, , spd] = sp.s[st - 1];
+  const [atk, def, , spd] = statsOf(sp, st);
   return (
     <div className="pm-stats">
       <span><b>{atk}</b>атака</span>
@@ -117,25 +148,30 @@ function SpeciesSheet({ id, st = 1, onClose }) {
   const [view, setView] = useState(st);
   const el = ELEMENTS[sp.el];
   const cl = CLASSES[sp.cls];
+  const fam = FAMILIES[sp.fam];
+  const reg = REGIONS[sp.reg];
+  const rar = RARITY[sp.rar];
   return (
     <Sheet title={sp.name} onClose={onClose}>
       <div className="pm-detail">
         <div className="pm-hero"><Portrait id={id} st={view} size={140} /></div>
-        <div className="seg" style={{ margin: '12px 0' }}>
-          {[1, 2, 3].map((n) => (
-            <button key={n} className={view === n ? 'on' : ''} onClick={() => setView(n)}>{STARS(n)}</button>
+        <div className="seg pm-star-seg" style={{ margin: '12px 0' }}>
+          {Array.from({ length: MAX_STARS }, (_, i) => i + 1).map((n) => (
+            <button key={n} className={view === n ? 'on' : ''} onClick={() => setView(n)}>★{n}</button>
           ))}
         </div>
-        <div className="pm-form-name">{sp.forms[view - 1]}</div>
+        <div className="pm-form-name">{formOf(sp, view)}</div>
         <StatRow sp={sp} st={view} />
-        <p className="pm-move"><i className="fa-solid fa-burst" /> {sp.moves[view - 1]}</p>
+        <p className="pm-move"><i className="fa-solid fa-burst" /> {sp.moves[Math.min(view, 3) - 1]}</p>
         <div className="pm-facts">
-          <span><i className={`fa-solid ${el.icon}`} style={{ color: el.color }} /> {el.name}</span>
+          <span className={`pm-rar rar-${sp.rar}`}><i className="fa-regular fa-gem" /> {rar.label}, {rar.name}: {rar.cost} мон., сила ×{rar.mult}</span>
+          <span><i className={`fa-solid ${PLACE_ICON[placeOf(sp)]}`} /> Место: {PLACE[placeOf(sp)]}. Не на своём — {MISPLACED * 100}% силы.</span>
           <span><i className={`fa-solid ${cl.icon}`} /> {cl.name}: в строю {cl.front}, в тылу {cl.back}</span>
-          <span><i className="fa-regular fa-gem" /> {RARITY[sp.rar].name}, {RARITY[sp.rar].cost} мон.</span>
+          <span><i className="fa-solid fa-wand-sparkles" /> Навык «{SKILLS[sp.skill].name}» на 3-м, 6-м и 9-м раундах: {SKILLS[sp.skill].text}</span>
+          <span><i className={`fa-solid ${el.icon}`} style={{ color: el.color }} /> {el.name}</span>
+          {fam && <span><i className={`fa-solid ${fam.icon}`} /> {fam.name}</span>}
+          {reg && <span><i className={`fa-solid ${reg.icon}`} /> {reg.name}{sp.home ? ` · ${sp.home}` : ''}</span>}
           {sp.weak && <span><i className="fa-solid fa-heart-crack" /> слабость: {ELEMENTS[sp.weak].name.toLowerCase()}</span>}
-          {sp.home && <span><i className="fa-solid fa-location-dot" /> {sp.home}</span>}
-          <span className="dim">{sp.form}</span>
         </div>
       </div>
     </Sheet>
@@ -156,8 +192,36 @@ function GiantSheet({ giant, onClose }) {
           <span><i className="fa-solid fa-paw" /> Его дети — их он не бьёт, но злится быстрее: {giant.kids.map((k) => BY_ID[k]?.name).filter(Boolean).join(', ')}</span>
           <span><i className="fa-solid fa-location-dot" /> {giant.where}</span>
         </div>
-        <p className="hint">Удары гиганта крепнут к концу недели: сегодня {giantPower(dayIndex())}, в воскресенье {giantPower(6)}. С четверга он бьёт трижды за раунд.</p>
+        <p className="hint">Хитов у гиганта {GIANT_HP.toLocaleString('ru')}. Удары крепнут к концу недели: сегодня {giantPower(dayIndex())}, в воскресенье {giantPower(6)}. С четверга он бьёт трижды за раунд.</p>
       </div>
+    </Sheet>
+  );
+}
+
+function PackSheet({ run, giant, dex, canRepack, onRepack, onClose, onOpen }) {
+  const groups = ['very_rare', 'rare', 'common'];
+  return (
+    <Sheet title="Набор недели" onClose={onClose}
+      footer={canRepack ? <button className="btn btn-block" onClick={onRepack}><i className="fa-solid fa-shuffle" /> Перебросить набор</button> : null}>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Лавка всю неделю даёт только эти 30 видов — так проще собирать тройки. Набор выпадает в понедельник;
+        {canRepack ? ' пока ничего не куплено, его можно перебросить.' : ' после первой покупки он закреплён.'}
+      </p>
+      {groups.map((rar) => (
+        <div key={rar}>
+          <div className={`section-title pm-rar-title rar-${rar}`}>{RARITY[rar].label} · {RARITY[rar].name}</div>
+          <div className="pm-pack">
+            {run.pack.filter((id) => BY_ID[id].rar === rar).map((id) => (
+              <button key={id} type="button" className={`pm-pack-item rar-${rar}`} onClick={() => onOpen(id)}>
+                <Portrait id={id} size={40} />
+                <span className="pm-name">{BY_ID[id].name}</span>
+                {BY_ID[id].el === giant.weak && <em className="pm-badge weak"><i className="fa-solid fa-heart-crack" /></em>}
+                {!dex[id] && <em className="pm-badge new">new</em>}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
     </Sheet>
   );
 }
@@ -170,7 +234,7 @@ function RaidReplay({ fight, giant, onClose }) {
   const last = res.frames.length - 1;
   useEffect(() => {
     if (k >= last) return;
-    const t = setTimeout(() => setK((x) => x + 1), res.frames[k].kind === 'round' ? 300 : 520);
+    const t = setTimeout(() => setK((x) => x + 1), res.frames[k].kind === 'round' ? 280 : 480);
     return () => clearTimeout(t);
   }, [k, last, res]);
   const fr = res.frames[k];
@@ -186,7 +250,7 @@ function RaidReplay({ fight, giant, onClose }) {
         const isTarget = fr.target?.[0] === rowKey && fr.target?.[1] === i;
         const wrathHit = fr.kind === 'wrath' && hp > 0;
         return (
-          <div key={u.u || i} className={`pm-fighter ${hp <= 0 ? 'down' : ''} ${isActor ? 'act' : ''} ${isTarget ? 'hit ' + (fr.kind || '') : ''} ${wrathHit ? 'hit hurt' : ''}`}>
+          <div key={u.u || i} className={`pm-fighter ${hp <= 0 ? 'down' : ''} ${isActor ? 'act ' + (fr.kind || '') : ''} ${isTarget ? 'hit ' + (fr.kind || '') : ''} ${wrathHit ? 'hit hurt' : ''}`}>
             <Portrait id={u.s} st={u.st} size={size} />
             <div className="pm-hp"><i style={{ width: `${Math.max(0, (hp / max) * 100)}%` }} />{shield > 0 && <s style={{ width: `${Math.min(100, (shield / max) * 100)}%` }} />}</div>
             <span className="pm-fname">{BY_ID[u.s].name}{skip ? ' 💤' : ''}</span>
@@ -205,7 +269,7 @@ function RaidReplay({ fight, giant, onClose }) {
         : <button className="btn btn-accent btn-block" onClick={onClose}>Снято {res.dmg} — закрыть</button>}
     >
       <div className="pm-arena">
-        <div className={`pm-arena-giant ${fr.kind === 'hit' ? 'hit' : ''} ${fr.kind === 'wrath' ? 'wrath' : ''}`}>
+        <div className={`pm-arena-giant ${fr.kind === 'hit' || fr.kind === 'skill' ? 'hit' : ''} ${fr.kind === 'wrath' ? 'wrath' : ''}`}>
           <GiantEmblem giant={giant} size={60} />
           <div className="pm-arena-giant-info">
             <b>{giant.name}</b>
@@ -215,7 +279,7 @@ function RaidReplay({ fight, giant, onClose }) {
         </div>
         <div className="pm-side-name">Строй</div>
         {row(fight.front, 'front', 46)}
-        {fight.back.length > 0 && <><div className="pm-side-name">Тыл</div>{row(fight.back, 'back', 34)}</>}
+        {fight.back.length > 0 && <><div className="pm-side-name">Тыл</div>{row(fight.back, 'back', 32)}</>}
       </div>
       {(fight.v || 0) !== ENGINE_V && <p className="hint">Правила боя с тех пор поменялись — повтор может отличаться от записанного урона.</p>}
       <div className="pm-log" ref={logRef}>
@@ -224,6 +288,46 @@ function RaidReplay({ fight, giant, onClose }) {
         ))}
       </div>
     </Sheet>
+  );
+}
+
+/* ---------- Команда партнёра (для профиля) ---------- */
+
+export function GameTeamCard({ uid, name }) {
+  const [st, setSt] = useState(null);
+  const [detail, setDetail] = useState(null);
+  useEffect(() => subscribeUserState(uid, setSt), [uid]);
+  const week = weekKey();
+  const giant = giantOf(week);
+  const g = st?.game?.week === week && Array.isArray(st.game.front) ? normalizeRun(st.game) : null;
+  if (!st) return null;
+  if (!g) return <p className="hint">{name} на этой неделе ещё не начинал(а) рейд на «{giant.name}».</p>;
+  const front = g.front.filter(Boolean);
+  const back = g.back.filter(Boolean);
+  return (
+    <div className="card pm-peek">
+      <div className="pm-peek-head">
+        <GiantEmblem giant={giant} size={40} />
+        <div>
+          <b>{giant.name}</b>
+          <div className="dim">снято {pct(g.damage || 0)}% · вылазок {(g.fights || []).length}</div>
+        </div>
+      </div>
+      <div className="section-title" style={{ marginTop: 12 }}>Строй</div>
+      <div className="pm-mini">
+        {front.length ? front.map((u) => <button key={u.u} type="button" onClick={() => setDetail(u)}><Portrait id={u.s} st={u.st} size={44} /><Stars n={u.st} /></button>) : <span className="dim">пусто</span>}
+      </div>
+      {back.length > 0 && (
+        <>
+          <div className="section-title">Тыл</div>
+          <div className="pm-mini">
+            {back.map((u) => <button key={u.u} type="button" onClick={() => setDetail(u)}><Portrait id={u.s} st={u.st} size={36} /><Stars n={u.st} /></button>)}
+          </div>
+        </>
+      )}
+      {(front.length + back.length) > 0 && <><div className="section-title">Связи</div><Bonds units={[...front, ...back]} giant={giant} /></>}
+      {detail && <SpeciesSheet id={detail.s} st={detail.st} onClose={() => setDetail(null)} />}
+    </div>
   );
 }
 
@@ -241,6 +345,7 @@ export function GameView({ tasks, me, users }) {
   const [sel, setSel] = useState(null);           // {where, i}
   const [detail, setDetail] = useState(null);     // {id, st}
   const [showGiant, setShowGiant] = useState(false);
+  const [showPack, setShowPack] = useState(false);
   const [replay, setReplay] = useState(null);
   const [tab, setTab] = useState('team');
   const [showIncome, setShowIncome] = useState(false);
@@ -252,24 +357,29 @@ export function GameView({ tasks, me, users }) {
   const rewards = useMemo(() => rewardsFor(tasks, me.uid, weekStart()), [tasks, me.uid]);
 
   const stored = state?.game;
-  const current = stored?.week === week && Array.isArray(stored.front); // старый формат (дуэли) не подхватываем
+  const current = stored?.week === week && Array.isArray(stored.front);
   const run = useMemo(() => {
     if (!state) return null;
-    const base = current ? stored : newRun(week, today);
+    const base = current ? upgradeRun(stored, me.uid) : newRun(week, today, me.uid);
     return ensureShop(base, me.uid, today, economy(base, rewards).level);
   }, [state, stored, current, week, today, rewards, me.uid]);
 
-  // Неделя кончилась — итог в историю, ран с нуля.
+  // Неделя кончилась — итог в историю, ран с нуля (и новый набор).
   useEffect(() => {
-    if (!state || !stored || current) return;
-    if (Array.isArray(stored.front)) {
+    if (!state || current) return;
+    if (stored && Array.isArray(stored.front)) {
       const pRun = pState?.game?.week === stored.week ? pState.game : null;
       const entry = { week: stored.week, giant: giantOf(stored.week).id, damage: stored.damage || 0, fights: (stored.fights || []).length, partnerDamage: pRun ? pRun.damage || 0 : null };
       const history = [entry, ...(state.gameHistory || []).filter((h) => h.week !== stored.week && h.giant)].slice(0, 30);
       saveUserState(me.uid, { gameHistory: history }).catch(reportError);
     }
-    saveGame(me.uid, newRun(week, today)).catch(reportError);
+    saveGame(me.uid, newRun(week, today, me.uid)).catch(reportError);
   }, [state, stored, current, week]);
+
+  // Старый формат текущей недели — один раз перезаписать в новом.
+  useEffect(() => {
+    if (current && stored.v !== 3) saveGame(me.uid, upgradeRun(stored, me.uid)).catch(reportError);
+  }, [current, stored?.v]);
 
   // Новый день — проценты с накоплений и опыт.
   useEffect(() => {
@@ -288,6 +398,7 @@ export function GameView({ tasks, me, users }) {
   const pRun = pState?.game?.week === week && Array.isArray(pState.game.front) ? pState.game : null;
   const todayFights = fightsOn(run, today);
   const nextCost = fightCost(todayFights);
+  const weekend = isWeekend(today);
 
   const commit = (res, msg) => {
     if (res.error) { toast(res.error); return null; }
@@ -295,7 +406,7 @@ export function GameView({ tasks, me, users }) {
     [...res.run.front, ...res.run.back, ...res.run.bench].forEach((u) => { if (u && (dex[u.s] || 0) < u.st) seen[u.s] = Math.max(seen[u.s] || 0, u.st); });
     if (Object.keys(seen).length) {
       saveUserState(me.uid, { gameDex: seen }).catch(reportError);
-      Object.entries(seen).forEach(([id, st]) => { if (st > 1) toast(`${BY_ID[id].name} ${STARS(st)} — новая форма: ${BY_ID[id].forms[st - 1]}!`); });
+      Object.entries(seen).forEach(([id, st]) => { if (st > 1) toast(`${BY_ID[id].name} ★${st} — ${formOf(BY_ID[id], st)}!`); });
     }
     setState((s) => ({ ...s, game: res.run, gameDex: { ...(s?.gameDex || {}), ...seen } }));
     saveGame(me.uid, res.run).catch(reportError);
@@ -307,7 +418,11 @@ export function GameView({ tasks, me, users }) {
     const u = run[where][i];
     if (sel) {
       if (sel.where === where && sel.i === i) { setSel(null); return; }
-      commit(move(run, eco, sel, { where, i }));
+      const moving = run[sel.where][sel.i];
+      const out = commit(move(run, eco, sel, { where, i }));
+      if (out && moving && where !== 'bench' && !fits(BY_ID[moving.s], where)) {
+        toast(`${BY_ID[moving.s].name}: место — ${PLACE[placeOf(BY_ID[moving.s])]}. Здесь будет работать на ${MISPLACED * 100}%.`);
+      }
       setSel(null);
       return;
     }
@@ -336,11 +451,13 @@ export function GameView({ tasks, me, users }) {
   const down = left === 0;
   const frontN = run.front.filter(Boolean).length;
   const backN = run.back.filter(Boolean).length;
+  const fresh = isFresh(run);
 
-  const zone = (where, size, cols) => (
+  const zone = (where, size, cols, compact) => (
     <div className={`pm-grid c${cols}`}>
       {Array.from({ length: size }, (_, i) => (
-        <UnitTile key={i} unit={run[where][i]} kid={!!run[where][i] && where !== 'bench' && kids.has(run[where][i].s)}
+        <UnitTile key={i} unit={run[where][i]} row={where === 'bench' ? null : where} compact={compact}
+          kid={!!run[where][i] && where !== 'bench' && kids.has(run[where][i].s)}
           selected={sel?.where === where && sel?.i === i}
           target={!run[where][i] && canTarget(where)}
           dim={where !== 'bench' && !run[where][i] && full && !sel}
@@ -397,47 +514,54 @@ export function GameView({ tasks, me, users }) {
         <>
           <div className="section-title pm-row-title"><span>Строй · бьёт гиганта</span><span className="dim">в команде {team.length}/{eco.slots}</span></div>
           {zone('front', FRONT_SIZE, 4)}
-          <div className="section-title pm-row-title"><span>Тыл · поддержка</span></div>
-          {zone('back', BACK_SIZE, 6)}
+          <div className="section-title pm-row-title"><span>Тыл · поддержка</span><span className="dim">{backN}/{BACK_SIZE}</span></div>
+          {zone('back', BACK_SIZE, 7, true)}
 
           <div className="section-title">Связи</div>
           <Bonds units={team} giant={giant} />
 
           <div className="section-title">Скамейка</div>
-          {zone('bench', BENCH_SIZE, 4)}
+          {zone('bench', BENCH_SIZE, 5, true)}
 
           {selUnit && (
             <div className="pm-actions">
-              <span className="pm-actions-name">{BY_ID[selUnit.s].name} {STARS(selUnit.st)}</span>
+              <span className="pm-actions-name">
+                {BY_ID[selUnit.s].name} <Stars n={selUnit.st} />
+                <span className="dim"> · место: {PLACE[placeOf(BY_ID[selUnit.s])]}</span>
+              </span>
               <button className="btn btn-sm" onClick={() => setDetail({ id: selUnit.s, st: selUnit.st })}>Подробнее</button>
               <button className="btn btn-sm" onClick={() => { commit(sell(run, sel.where, sel.i), `Продано: +${unitCost(selUnit)}`); setSel(null); }}>
                 Продать +{unitCost(selUnit)}
               </button>
               <button className="btn btn-sm btn-ghost" onClick={() => setSel(null)}>Отмена</button>
-              <span className="hint">нажми на другое место, чтобы переставить</span>
             </div>
           )}
 
           <div className="section-title pm-row-title">
-            <span>Лавка</span>
-            <span className="dim">шансы {odds[0]} · {odds[1]} · {odds[2]}%</span>
+            <span>Лавка{weekend ? ' · выходные' : ''}</span>
+            <button type="button" className="pm-link" onClick={() => setShowPack(true)}><i className="fa-solid fa-layer-group" /> набор недели</button>
+          </div>
+          <div className="pm-odds">
+            {['common', 'rare', 'very_rare'].map((rar, i) => <span key={rar} className={`rar-${rar} ${odds[i] ? '' : 'off'}`}>{RARITY[rar].label} {odds[i]}%</span>)}
           </div>
           <div className="pm-shop">
-            {run.shop.ids.map((id, i) => {
-              if (!id) return <div key={i} className="pm-card sold">куплено</div>;
-              const sp = BY_ID[id];
-              const cost = RARITY[sp.rar].cost;
-              const owned = [...run.front, ...run.back, ...run.bench].filter((u) => u && u.s === id && u.st === 1).length;
+            {run.shop.offers.map((o, i) => {
+              if (!o) return <div key={i} className="pm-card sold">куплено</div>;
+              const sp = BY_ID[o.s];
+              const cost = offerCost(o);
+              const owned = [...run.front, ...run.back, ...run.bench].filter((u) => u && u.s === o.s && u.st === o.st).length;
               return (
-                <div key={i} className={`pm-card rar-${sp.rar}`}>
-                  <button type="button" className="pm-card-body" onClick={() => setDetail({ id, st: 1 })}>
-                    <Portrait id={id} size={52} />
+                <div key={i} className={`pm-card rar-${sp.rar} ${o.st > 1 ? 'star3' : ''}`}>
+                  <button type="button" className="pm-card-body" onClick={() => setDetail({ id: o.s, st: o.st })}>
+                    <Portrait id={o.s} st={o.st} size={48} />
+                    {o.st > 1 && <Stars n={o.st} />}
                     <span className="pm-name">{sp.name}</span>
                     <span className="pm-tags">
                       <i className={`fa-solid ${ELEMENTS[sp.el].icon}`} style={{ color: ELEMENTS[sp.el].color }} />
                       <i className={`fa-solid ${CLASSES[sp.cls].icon}`} />
+                      <i className={`fa-solid ${PLACE_ICON[placeOf(sp)]}`} />
                     </span>
-                    {!dex[id] && <em className="pm-badge new" title="Ещё нет в бестиарии">new</em>}
+                    {!dex[o.s] && <em className="pm-badge new" title="Ещё нет в бестиарии">new</em>}
                     {owned > 0 && <em className="pm-badge" title="Три одинаковых сольются">{owned}/3</em>}
                     {sp.el === giant.weak && !owned && <em className="pm-badge weak" title="Слабость гиганта недели"><i className="fa-solid fa-heart-crack" /></em>}
                   </button>
@@ -457,8 +581,9 @@ export function GameView({ tasks, me, users }) {
             </button>
           </div>
           <p className="hint" style={{ marginTop: 10 }}>
-            Три одинаковых одной звезды сливаются в одну на звезду выше. Лавка бесплатно обновляется каждый день.
-            Отложенные монеты приносят проценты: +1 за каждые 10, до +5 в день.
+            Три одинаковых одной звезды сливаются в одну на звезду выше — до ★6. Зелёные, синие и фиолетовые различаются не только ценой:
+            синие на 15%, фиолетовые на 30% сильнее. Какие цвета приходят, зависит от уровня. В субботу и воскресенье лавка может
+            сразу предложить ★3 тех видов, что у тебя уже есть на ★3.
           </p>
         </>
       )}
@@ -468,11 +593,12 @@ export function GameView({ tasks, me, users }) {
           <div className="section-title">Вылазка · {DAYS[dIdx]}</div>
           <div className="card">
             <p style={{ marginTop: 0 }}>
-              Строй бьёт гиганта до 10 раундов или пока не падёт, тыл поддерживает. Урон копится за неделю.
+              Строй бьёт гиганта 10 раундов или пока не падёт, тыл поддерживает. На 3-м, 6-м и 9-м раундах каждая особь применяет свой навык.
+              Урон копится за неделю.
               {down && <b> Гигант повержен — можно бить дальше ради рекорда.</b>}
             </p>
             <div className="pm-mini">
-              {run.front.filter(Boolean).map((u) => <button key={u.u} type="button" onClick={() => setDetail({ id: u.s, st: u.st })}><Portrait id={u.s} st={u.st} size={42} /><span>{STARS(u.st)}</span></button>)}
+              {run.front.filter(Boolean).map((u) => <button key={u.u} type="button" onClick={() => setDetail({ id: u.s, st: u.st })}><Portrait id={u.s} st={u.st} size={42} /><Stars n={u.st} /></button>)}
               {backN > 0 && <span className="pm-mini-sep">+ тыл {backN}</span>}
             </div>
             <button className="btn btn-accent btn-block" disabled={!frontN || eco.coins < nextCost} onClick={raid} style={{ marginTop: 12 }}>
@@ -504,7 +630,7 @@ export function GameView({ tasks, me, users }) {
                   <div key={h.week} className={`pm-battle static ${h.damage >= GIANT_HP ? 'win' : ''}`}>
                     <span>{h.week.slice(8)}.{h.week.slice(5, 7)}</span>
                     <span className="dim">{g?.name}</span>
-                    <b>{h.damage >= GIANT_HP ? 'повержен' : `${pct(h.damage)}%`}</b>
+                    <b>{pct(h.damage)}%</b>
                     <span className="dim">{h.partnerDamage != null ? `${partner?.name}: ${pct(h.partnerDamage)}%` : ''}</span>
                   </div>
                 );
@@ -532,7 +658,7 @@ export function GameView({ tasks, me, users }) {
                 <button key={s.id} type="button" className={`pm-dex-item rar-${s.rar}`} onClick={() => setDetail({ id: s.id, st })}>
                   <Portrait id={s.id} st={st} size={54} />
                   <span className="pm-name">{s.name}</span>
-                  <span className="pm-stars">{STARS(st)}</span>
+                  <Stars n={st} />
                 </button>
               ) : (
                 <div key={s.id} className="pm-dex-item unknown"><div className="pm-portrait" style={{ width: 54, height: 54 }}>?</div><span className="pm-name">???</span></div>
@@ -544,6 +670,12 @@ export function GameView({ tasks, me, users }) {
 
       {detail && <SpeciesSheet id={detail.id} st={detail.st} onClose={() => setDetail(null)} />}
       {showGiant && <GiantSheet giant={giant} onClose={() => setShowGiant(false)} />}
+      {showPack && (
+        <PackSheet run={run} giant={giant} dex={dex} canRepack={fresh}
+          onRepack={() => { if (commit(repack(run, me.uid), 'Набор переброшен')) setShowPack(false); }}
+          onOpen={(id) => setDetail({ id, st: 1 })}
+          onClose={() => setShowPack(false)} />
+      )}
       {replay && <RaidReplay fight={replay} giant={giant} onClose={() => setReplay(null)} />}
 
       {showIncome && (
@@ -554,14 +686,14 @@ export function GameView({ tasks, me, users }) {
             <div className="stat"><div className="n">{run.spent || 0}</div><div className="l">потрачено</div></div>
           </div>
           <p className="hint">
-            Задача — 2 монеты; важная ещё +1…+3 (половина важности), срочная +1, за каждые два пункта чеклиста +1 (до +3).
+            Задача — 2 монеты, а с подзадачами — монета за каждую подзадачу (не меньше двух). Важная ещё +1…+3 (половина важности), срочная +1.
             На старте недели — 8 монет. Каждый новый день: проценты с отложенного (+1 за 10, до +5) и +{DAILY_XP} опыта.
             Всё остальное — особи, опыт, перебросы и лишние вылазки — покупается за монеты.
           </p>
           {rewards.list.length === 0 && <div className="empty">На этой неделе задач пока не закрыто.</div>}
           {rewards.list.map((r) => (
             <div key={r.id} className="pm-income">
-              <span>{r.title}</span>
+              <span>{r.title}{r.items ? <span className="dim"> · {r.items} подзадач</span> : null}</span>
               <b><i className="fa-solid fa-coins" /> {r.coins}</b>
             </div>
           ))}

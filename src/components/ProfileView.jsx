@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { Avatar } from './Avatar';
 import { startOfToday, startOfWeek, toDate, isActive, isClosed, projectsOf } from '../lib/util';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { PushSettings } from './PushSettings';
+
+// Команда в игре — грузится только когда смотрят чужой профиль.
+const GameTeamCard = lazy(() => import('./GameView').then((m) => ({ default: m.GameTeamCard })));
 
 export const PROJECT_PALETTE = [
   '#d99873', '#c9a24b', '#a4453f', '#85925a', '#bd9a63',
@@ -102,6 +105,15 @@ export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAcce
         <div className="stat"><div className="n">{s.doneToday}</div><div className="l">За сегодня</div></div>
         <div className="stat"><div className="n">{s.doneWeek}</div><div className="l">За неделю</div></div>
       </div>
+
+      {view !== me.uid && (
+        <>
+          <div className="section-title">Команда в Послемирье</div>
+          <Suspense fallback={<div className="empty"><i className="fa-solid fa-spinner fa-spin" /></div>}>
+            <GameTeamCard uid={who.uid} name={who.name} />
+          </Suspense>
+        </>
+      )}
 
       {view === me.uid && (
         <>

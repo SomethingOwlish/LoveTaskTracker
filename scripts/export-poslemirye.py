@@ -2,7 +2,7 @@
 
 Источник — набор species.json из заготовки systemsetup:
   python3 scripts/export-poslemirye.py <путь>/systemsetup/src/content/seeds/poslemirye/data
-Пишет src/game/species.json и src/game/giants.json: только то, что нужно автобаттлеру (статы ★1–★3,
+Пишет src/game/species.json (статы ★1–★6, семейство, регион, группа навыка) и src/game/giants.json: только то, что нужно автобаттлеру (статы ★1–★3,
 формы, приёмы, картинки, стихия, класс, редкость, слабость).
 """
 import json, sys, os
@@ -22,7 +22,8 @@ for e in species:
         'el': v['element'], 'cls': v['class'], 'rar': v['rarity'],
         'weak': v.get('weaknessElement') or None,
         'pow': v.get('power', 5), 'acc': v.get('accuracy', 4),
-        's': [[v[f'{k}{i}'] for k in ('atk', 'def', 'hp', 'spd')] for i in (1, 2, 3)],
+        's': [[v[f'{k}{i}'] for k in ('atk', 'def', 'hp', 'spd')] for i in range(1, 7)],
+        'fam': v.get('animalType', 'other'), 'reg': v.get('region', ''), 'skill': v.get('skillGroup', 'damage'),
         'forms': forms, 'moves': moves, 'img': imgs,
         'home': v.get('habitat', ''),
     })
