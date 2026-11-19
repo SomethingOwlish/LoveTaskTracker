@@ -12,12 +12,20 @@ import {
   EXPENSE_CATS, INCOME_CATS, WALLET_ICONS, FEE_CATEGORIES,
 } from '../lib/budget';
 import { subscribeRates } from '../lib/fx';
-import { CURRENCIES, CURRENCY_CODES, DEFAULT_BASE, fmtCur, curOf, convert } from '../lib/currency';
+import { CURRENCIES, CURRENCY_CODES, DEFAULT_BASE, fmtCur, curOf, convert, fxRate, normCode } from '../lib/currency';
+import { convertInput, inputOf } from '../lib/budgetMath';
 import { RecurringList, LimitsSheet, MonthsChart } from './BudgetExtras';
 import { processReceiptPhoto } from '../lib/receipt';
 import { parseMoney, monthTitle, toDate, dayKey, fmtDate, fmtWeekday, isSameDay, uid6 } from '../lib/util';
 
 const TYPE_LABEL = { expense: 'Расход', income: 'Доход', transfer: 'Перевод' };
+// валюты ввода операции: в каком порядке показывать + «другое» (свой код)
+const INPUT_CURS = ['RSD', 'USD', 'RUB', 'EUR'];
+const curSym = (c) => CURRENCIES[c]?.symbol || c || '';
+const fmtRate = (r) => (r >= 1
+  ? r.toLocaleString('ru-RU', { maximumFractionDigits: 4 })
+  : r.toLocaleString('ru-RU', { maximumSignificantDigits: 4 }));
+const parseRate = (s) => { const v = Number(String(s || '').replace(/[\s\u00a0\u202f]/g, '').replace(',', '.')); return Number.isFinite(v) && v > 0 ? v : NaN; };
 
 // Основная валюта сводок — задаётся в настройках бюджета; BudgetView обновляет
 // её при каждой отрисовке, чтобы не протаскивать через все компоненты.
@@ -145,6 +153,7 @@ function TxRow({ tx, ctx, showDate }) {
           {showDate && d && <> · {fmtDate(d)}</>}
           {tx.items?.length ? <> · {tx.items.length} поз.</> : null}
           {tx.fee ? <> · {tx.feeCategory === 'Налоги' ? 'налог' : 'комиссия'} {fmtCur(tx.fee, curOf(tx, BASE))}</> : null}
+          {tx.origCurrency && tx.rate ? <> · {fmtCur(tx.origAmount, tx.origCurrency)} по {fmtRate(tx.rate)}</> : null}
         </span>
       </span>
       <span className="tx-right">
@@ -586,8 +595,10 @@ function WalletSheet({ ctx, wallet, onClose }) {
 /* ---------- Операция ---------- */
 function TxSheet({ ctx, tx, initial = {}, onClose }) {
   const src = tx || initial;
+  // суммы в форме — в валюте ввода (для пересчитанной операции — исходные)
+  const srcIn = useMemo(() => inputOf(src), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [type, setType] = useState(src.type || 'expense');
-  const [amount, setAmount] = useState(src.amount != null ? String(src.amount) : '');
+  const [amount, setAmount] = useState(srcIn.amount != null ? String(srcIn.amount) : '');
   const [walletId, setWalletId] = useState(tx ? tx.walletId : (src.walletId !== undefined ? src.walletId : (ctx.activeWallets.find((w) => w.id === 'card') || ctx.activeWallets[0])?.id || null));
   const [toWalletId, setToWalletId] = useState(src.toWalletId || ctx.activeWallets.find((w) => w.id === 'savings')?.id || null);
   const [category, setCategory] = useState(src.category || '');
@@ -596,18 +607,33 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
   const [planned, setPlanned] = useState(!!src.planned);
   const [projectId, setProjectId] = useState(src.projectId || null);
   const [receiptId, setReceiptId] = useState(src.receiptId || null);
-  const [items, setItems] = useState(() => (src.items || []).map((x) => ({ ...x, amountStr: String(x.amount) })));
+  const [items, setItems] = useState(() => srcIn.items.map((x) => ({ ...x, amountStr: String(x.amount) })));
   const [customCat, setCustomCat] = useState(false);
   const [viewer, setViewer] = useState(null);
-  const [fee, setFee] = useState(src.fee ? String(src.fee) : '');
+  const [fee, setFee] = useState(srcIn.fee ? String(srcIn.fee) : '');
   const [feeCategory, setFeeCategory] = useState(src.feeCategory || (src.type === 'income' ? 'Налоги' : 'Комиссии'));
   const [toAmount, setToAmount] = useState(src.toAmount != null ? String(src.toAmount) : '');
-  // валюта — от кошелька; у операции «вне кошельков» выбирается вручную
-  const [freeCur, setFreeCur] = useState(src.currency || src.qrCurrency || BASE);
-  const currency = walletId ? ctx.walletCur(walletId) : freeCur;
+  // acct — валюта, в которой операция ляжет в учёт: валюта кошелька,
+  // «вне кошельков» — основная. Доход/расход можно ввести в другой валюте
+  // (inCur) — тогда сумма пересчитывается по курсу (авто из fx, можно поправить).
+  const acct = walletId ? ctx.walletCur(walletId) : BASE;
+  const startCur = srcIn.origCurrency || src.qrCurrency || (tx && !tx.walletId ? tx.currency : null) || acct;
+  const [curPick, setCurPick] = useState(INPUT_CURS.includes(startCur) ? startCur : 'other');
+  const [otherCode, setOtherCode] = useState(INPUT_CURS.includes(startCur) ? '' : startCur);
+  const inCur = type === 'transfer' ? acct : curPick === 'other' ? normCode(otherCode) : curPick;
+  const [rateStr, setRateStr] = useState(srcIn.rate ? String(srcIn.rate) : '');
+  const [rateTouched, setRateTouched] = useState(!!srcIn.rate);
+  const resetRate = () => { setRateTouched(false); setRateStr(''); };
+  // сменили кошелёк на кошелёк в другой валюте — ручной курс уже не к месту
+  const acctRef = useRef(acct);
+  useEffect(() => { if (acctRef.current !== acct) { acctRef.current = acct; resetRate(); } }, [acct]);
+  const foreign = type !== 'transfer' && !!inCur && inCur !== acct;
+  const autoRate = foreign ? fxRate(inCur, acct, ctx.fx) : 1;
+  const rate = !foreign ? 1 : rateTouched ? parseRate(rateStr) : autoRate;
+  const currency = foreign ? inCur : acct; // валюта полей суммы/комиссии/позиций
   const toCurrency = type === 'transfer' && toWalletId ? ctx.walletCur(toWalletId) : null;
   const crossCur = type === 'transfer' && toCurrency && toCurrency !== currency;
-  const sym = CURRENCIES[currency]?.symbol || '';
+  const sym = curSym(currency);
 
   const cats = type === 'income' ? INCOME_CATS : EXPENSE_CATS;
   const usedCats = useMemo(() => {
@@ -633,6 +659,7 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
   const feeNum = parseMoney(fee) || 0;
   const toNum = parseMoney(toAmount);
   const canSave = Number.isFinite(sum) && sum > 0 && feeNum >= 0
+    && (type === 'transfer' || (!!inCur && (!foreign || rate > 0)))
     && (type !== 'transfer' || (walletId && toWalletId && walletId !== toWalletId && (!crossCur || (Number.isFinite(toNum) && toNum > 0))));
 
   const save = () => {
@@ -640,12 +667,15 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
     const [y, m, d] = date.split('-').map(Number);
     const orig = tx && toDate(tx.date);
     const when = orig && dayKey(orig) === date ? orig : new Date(y, m - 1, d, 12, 0, 0);
+    const money = convertInput({
+      type, amount: sum, fee: feeNum, origCurrency: foreign ? inCur : null, rate,
+      items: type === 'expense' ? items.map((x) => ({ id: x.id, title: x.title.trim(), amount: parseMoney(x.amountStr) || 0, category: x.category || category })) : [],
+    }, acct);
     saveTx(tx || null, {
-      type, amount: sum, currency, fee: feeNum, feeCategory,
+      type, ...money, feeCategory,
       toAmount: crossCur ? toNum : null, toCurrency,
       walletId, toWalletId, category: category || cats[cats.length - 1].id, note: note.trim(),
       date: when, planned, projectId, receiptId,
-      items: type === 'expense' ? items.map((x) => ({ id: x.id, title: x.title.trim(), amount: parseMoney(x.amountStr) || 0, category: x.category || category })) : [],
     }, ctx.me.uid, ctx.known).catch((e) => reportError(e, 'Не сохранилось'));
     onClose();
   };
@@ -683,10 +713,35 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
         </div>
       </div>
 
-      {!walletId && type !== 'transfer' && (
+      {type !== 'transfer' && (
         <div className="field">
-          <label>Валюта</label>
-          <Seg value={freeCur} onChange={setFreeCur} options={CURRENCY_CODES.map((c) => [c, `${CURRENCIES[c].symbol} ${c}`])} />
+          <label>Валюта {type === 'income' ? 'дохода' : 'расхода'}</label>
+          <Seg value={curPick} onChange={(c) => { setCurPick(c); resetRate(); }} className="seg-sm"
+            options={[...INPUT_CURS.map((c) => [c, `${CURRENCIES[c].symbol} ${c}`]), ['other', 'другое']]} />
+          {curPick === 'other' && (
+            <input className="input" style={{ marginTop: 8 }} value={otherCode} maxLength={3} placeholder="Код валюты, например GBP"
+              autoCapitalize="characters" onChange={(e) => { setOtherCode(e.target.value.toUpperCase()); resetRate(); }} />
+          )}
+          {foreign && (
+            <div className="fx-row">
+              <span>1 {inCur} =</span>
+              <input className="input" inputMode="decimal" aria-label="Курс"
+                value={rateTouched ? rateStr : autoRate ? fmtRate(autoRate) : ''} placeholder="курс"
+                onChange={(e) => { setRateTouched(true); setRateStr(e.target.value); }} />
+              <span>{acct}</span>
+              {rateTouched && autoRate && <button type="button" className="link-btn" onClick={resetRate}>по рынку</button>}
+            </div>
+          )}
+          {foreign && (
+            <div className={`hint ${rate > 0 ? '' : 'bad'}`}>
+              {!(rate > 0)
+                ? (autoRate ? 'Курс не похож на число.' : `Курса ${inCur} нет в справочнике — введи вручную.`)
+                : <>
+                  {Number.isFinite(sum) && sum > 0 && <>Запишется: <b>{fmtCur(sum * rate, acct)}</b> {walletId ? `в «${ctx.wallets.find((w) => w.id === walletId)?.name}»` : 'в основной валюте'} · </>}
+                  {rateTouched ? 'курс введён вручную' : `курс на ${ctx.fx?.updatedAt ? fmtDate(new Date(ctx.fx.updatedAt)) : '—'} (можно поправить)`}
+                </>}
+            </div>
+          )}
         </div>
       )}
 
@@ -723,8 +778,8 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
         </div>
         {feeNum > 0 && Number.isFinite(sum) && sum > 0 && (
           <div className="hint">
-            {type === 'income' && <>На счёт придёт: <b>{fmtCur(sum - feeNum, currency)}</b></>}
-            {type === 'expense' && <>Всего спишется: <b>{fmtCur(sum + feeNum, currency)}</b></>}
+            {type === 'income' && <>На счёт придёт: <b>{fmtCur(sum - feeNum, currency)}</b>{foreign && rate > 0 ? <> ≈ {fmtCur((sum - feeNum) * rate, acct)}</> : null}</>}
+            {type === 'expense' && <>Всего спишется: <b>{fmtCur(sum + feeNum, currency)}</b>{foreign && rate > 0 ? <> ≈ {fmtCur((sum + feeNum) * rate, acct)}</> : null}</>}
             {type === 'transfer' && <>Из кошелька уйдёт: <b>{fmtCur(sum + feeNum, currency)}</b></>}
             {' '}· {fmtCur(feeNum, currency)} → «{feeCategory}»
           </div>
@@ -808,7 +863,7 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
           {items.map((it) => (
             <div key={it.id} className="split-row">
               <input className="input" value={it.title} placeholder="Позиция" onChange={(e) => setItems((p) => p.map((x) => (x.id === it.id ? { ...x, title: e.target.value } : x)))} />
-              <input className="input" inputMode="decimal" value={it.amountStr} placeholder="₽" onChange={(e) => setItems((p) => p.map((x) => (x.id === it.id ? { ...x, amountStr: e.target.value } : x)))} />
+              <input className="input" inputMode="decimal" value={it.amountStr} placeholder={sym} onChange={(e) => setItems((p) => p.map((x) => (x.id === it.id ? { ...x, amountStr: e.target.value } : x)))} />
               <select className="input" value={it.category || ''} onChange={(e) => setItems((p) => p.map((x) => (x.id === it.id ? { ...x, category: e.target.value } : x)))}>
                 <option value="">{category || 'категория'}</option>
                 {[...EXPENSE_CATS.map((c) => c.id), ...usedCats].map((c) => <option key={c} value={c}>{c}</option>)}

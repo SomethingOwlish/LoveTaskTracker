@@ -742,6 +742,8 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 .push-time .input { padding: 8px; }
 /* ---------- Бюджет: валюты, комиссии, лимиты, график ---------- */
 .fee-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.fx-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-size: 14px; white-space: nowrap; }
+.fx-row .input { flex: 1; min-width: 0; }
 .cat-track { position: relative; }
 .cat-limit { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); opacity: 0.7; border-radius: 1px; }
 .cat-bar.over .cat-track span { background: var(--bad); }
