@@ -841,10 +841,9 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 
 .pm-grid { display: grid; gap: 6px; }
 .pm-grid.c4 { grid-template-columns: repeat(4, 1fr); }
-.pm-grid.c6 { grid-template-columns: repeat(6, 1fr); }
-.pm-grid.c6 .pm-slot { min-height: 64px; padding: 5px 2px; }
-.pm-grid.c6 .pm-portrait { width: 34px !important; height: 34px !important; }
-.pm-grid.c6 .pm-name, .pm-grid.c6 .pm-tags { display: none; }
+.pm-grid.c5 { grid-template-columns: repeat(5, 1fr); }
+.pm-grid.c7 { grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.pm-grid.c5 .pm-slot, .pm-grid.c7 .pm-slot { min-height: 58px; padding: 5px 1px; }
 .pm-row-title { display: flex; justify-content: space-between; gap: 8px; }
 .pm-row-title .dim { text-transform: none; letter-spacing: 0; }
 .pm-slot {
@@ -857,8 +856,39 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 .pm-slot.empty.target { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .pm-slot.locked { border-style: dashed; background: transparent; color: var(--text-dim); justify-content: center; opacity: 0.6; }
 .pm-slot.sel { border-color: var(--accent); box-shadow: var(--ring); transform: translateY(-2px); }
-.pm-slot.rar-rare, .pm-card.rar-rare, .pm-dex-item.rar-rare { border-color: color-mix(in srgb, #6aa0e0 55%, var(--border)); }
-.pm-slot.rar-very_rare, .pm-card.rar-very_rare, .pm-dex-item.rar-very_rare { border-color: color-mix(in srgb, var(--warn) 65%, var(--border)); }
+/* цвета редкости: зелёное → синее → фиолетовое */
+.pm { --rar-common: #5fbf6a; --rar-rare: #4f9be0; --rar-very_rare: #a56be8; }
+.pm-slot.rar-common, .pm-card.rar-common, .pm-dex-item.rar-common, .pm-pack-item.rar-common { border-color: color-mix(in srgb, var(--rar-common) 45%, var(--border)); }
+.pm-slot.rar-rare, .pm-card.rar-rare, .pm-dex-item.rar-rare, .pm-pack-item.rar-rare { border-color: color-mix(in srgb, var(--rar-rare) 65%, var(--border)); }
+.pm-slot.rar-very_rare, .pm-card.rar-very_rare, .pm-dex-item.rar-very_rare, .pm-pack-item.rar-very_rare {
+  border-color: var(--rar-very_rare); box-shadow: inset 0 0 14px color-mix(in srgb, var(--rar-very_rare) 25%, transparent);
+}
+.pm-card.rar-common .pm-buy { background: color-mix(in srgb, var(--rar-common) 70%, #000); color: #fff; }
+.pm-card.rar-rare .pm-buy { background: color-mix(in srgb, var(--rar-rare) 80%, #000); color: #fff; }
+.pm-card.rar-very_rare .pm-buy { background: var(--rar-very_rare); color: #fff; }
+.pm-card.star3 { box-shadow: 0 0 0 2px var(--warn), 0 0 18px color-mix(in srgb, var(--warn) 35%, transparent); }
+.pm-rar.rar-common i { color: var(--rar-common); } .pm-rar.rar-rare i { color: var(--rar-rare); } .pm-rar.rar-very_rare i { color: var(--rar-very_rare); }
+.pm-rar-title.rar-common { color: var(--rar-common); } .pm-rar-title.rar-rare { color: var(--rar-rare); } .pm-rar-title.rar-very_rare { color: var(--rar-very_rare); }
+.pm-odds { display: flex; gap: 6px; margin: -4px 0 8px; font-size: 11.5px; }
+.pm-odds span { padding: 2px 8px; border-radius: 999px; background: var(--bg-2); }
+.pm-odds span.off { opacity: 0.35; }
+.pm-odds .rar-common { color: var(--rar-common); } .pm-odds .rar-rare { color: var(--rar-rare); } .pm-odds .rar-very_rare { color: var(--rar-very_rare); }
+.pm-link { background: none; border: 0; color: var(--accent); font-size: 12px; text-transform: none; letter-spacing: 0; padding: 0; }
+.pm-stars.awake { color: #fff; background: linear-gradient(90deg, var(--warn), #e07ad6); padding: 0 5px; border-radius: 6px; font-size: 10px; font-weight: 800; }
+.pm-portrait.awake { box-shadow: 0 0 0 2px var(--warn), 0 0 12px color-mix(in srgb, var(--warn) 60%, transparent); }
+.pm-slot.wrong { border-style: dashed; border-color: var(--warn); }
+.pm-slot.wrong .pm-portrait { opacity: 0.7; }
+.pm-badge.wrongb { top: 3px; left: 3px; right: auto; color: var(--warn); background: var(--bg-2); font-size: 9px; }
+.pm-pack { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.pm-pack-item { position: relative; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); padding: 6px 2px; display: flex; flex-direction: column; align-items: center; gap: 3px; color: var(--text); min-width: 0; }
+.pm-pack-item .pm-name { font-size: 10px; }
+.pm-bond.size { border-style: dashed; }
+.pm-bond.size.on { border-style: solid; }
+.pm-peek-head { display: flex; gap: 10px; align-items: center; }
+.pm-peek-head .dim { font-size: 12px; }
+.pm-log-line.skill { color: color-mix(in srgb, var(--accent) 75%, var(--text)); }
+.pm-fighter.act.skill .pm-portrait { box-shadow: 0 0 0 3px var(--warn), 0 0 16px var(--warn); }
+.pm-star-seg button { padding-left: 2px; padding-right: 2px; }
 .pm-stars { color: var(--warn); font-size: 11px; letter-spacing: 1px; line-height: 1; }
 .pm-name { font-size: 11.5px; font-weight: 700; line-height: 1.15; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .pm-tags { display: flex; gap: 6px; font-size: 11px; color: var(--text-dim); align-items: center; }
@@ -886,7 +916,7 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 .pm-bond-off { display: flex; flex-wrap: wrap; gap: 6px; }
 .pm-bond-off span { font-size: 12px; color: var(--text-dim); padding: 3px 8px; border-radius: 999px; border: 1px dashed var(--border); }
 .pm-bond-off span.weak { border-color: color-mix(in srgb, var(--bad) 60%, transparent); }
-.pm-grid.c6 .pm-badge.kid { font-size: 0; width: 8px; height: 8px; padding: 0; border-radius: 50%; background: var(--warn); }
+.pm-grid.c7 .pm-badge.kid { font-size: 0; width: 8px; height: 8px; padding: 0; border-radius: 50%; background: var(--warn); }
 .pm-weak { grid-column: 2 / -1; font-style: normal; font-size: 11px; color: var(--bad); }
 
 .pm-actions {
