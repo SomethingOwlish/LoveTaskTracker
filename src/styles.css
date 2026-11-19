@@ -1089,3 +1089,14 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 .eps-btn.next { border-color: var(--accent); border-style: dashed; }
 .eps-btn:disabled { opacity: .35; }
 .eps-season-head .spacer { flex: 1; }
+
+/* ---------- Вишлист ---------- */
+.wish-types { margin-bottom: 12px; }
+.wish-total { margin: 0 0 10px; }
+.wish-card { cursor: pointer; }
+.wish-card .task-top { align-items: center; }
+.wish-card .task-top h3 { overflow-wrap: anywhere; }
+.wish-card.got h3 { text-decoration: line-through; text-decoration-color: var(--text-dim); }
+.wish-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.wish-foot a.chip { text-decoration: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wish-date { font-size: 12px; }

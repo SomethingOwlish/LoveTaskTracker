@@ -145,6 +145,18 @@ service cloud.firestore {
       allow read, write: if allowed();
     }
 
+    // ---------- Вишлист ----------
+    match /wishlist/{id} {
+      allow read, delete: if allowed();
+      allow create, update: if allowed()
+        && shortText(request.resource.data.title, 300) && request.resource.data.title.size() > 0
+        && request.resource.data.type in ['need', 'games', 'gift', 'cute']
+        && request.resource.data.status in ['want', 'got']
+        && request.resource.data.ownerUid in emails()
+        && (request.resource.data.price == null || request.resource.data.price is number)
+        && (request.resource.data.url == null || shortText(request.resource.data.url, 2000));
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

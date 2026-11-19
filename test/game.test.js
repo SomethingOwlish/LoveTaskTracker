@@ -269,3 +269,33 @@ describe('вылазка на гиганта', () => {
     expect(res.frames.some((f) => f.kind === 'hurt')).toBe(false);
   });
 });
+
+describe('смена недели', () => {
+  const at = (y, m, d, h = 12) => ({ toMillis: () => new Date(y, m, d, h).getTime() });
+  const prev = new Date(2026, 10, 23); // неделя после смены правил
+  const data = {
+    tasks: [
+      { id: 'old', assigneeUid: 'me', status: 'done', completedAt: at(2026, 10, 20) },
+      { id: 'new', assigneeUid: 'me', status: 'done', completedAt: at(2026, 10, 24) },
+    ],
+    moods: [{ uid: 'me', day: '2026-11-22' }, { uid: 'me', day: '2026-11-23' }],
+    media: [{ id: 'm', status: 'done', doneAt: at(2026, 10, 21), doneBy: 'me' }],
+    tx: [{ authorUid: 'me', createdAt: at(2026, 10, 22) }],
+  };
+  it('прошлые недели в монеты не попадают — архив можно удалять', () => {
+    const all = rewardsFor(data, 'me', prev);
+    const onlyThisWeek = rewardsFor({
+      tasks: data.tasks.filter((t) => t.id === 'new'),
+      moods: data.moods.filter((m) => m.day >= '2026-11-23'),
+      media: [], tx: [],
+    }, 'me', prev);
+    expect(all).toEqual(onlyThisWeek);
+    expect(all.coins).toBe(2 + 1); // задача в срок + день настроения
+  });
+  it('новый ран начинает с нуля, без денег прошлой недели', () => {
+    const run = newRun('2026-11-23', '2026-11-23', 'me');
+    expect(economy(run, NONE).coins).toBe(START_COINS);
+    expect(run.spent).toBe(0);
+    expect(run.interest).toBe(0);
+  });
+});
