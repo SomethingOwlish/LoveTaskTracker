@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  SPECIES, BY_ID, GIANTS, RARITY, newRun, economy, rewardsFor, taskReward, carryFor, ensureShop, buy, sell, move, mergeAll,
+  SPECIES, BY_ID, GIANTS, RARITY, newRun, economy, rewardsFor, taskReward, ensureShop, buy, sell, move, mergeAll,
   simulateRaid, giantOf, levelOf, teamSize, tick, START_COINS, BENCH_SIZE, BACK_SIZE, MAX_TEAM, reroll, bonds,
   fightCost, makePack, repack, rollShop, statsOf, placeOf, fits, normalizeRun, PACK_SIZE,
 } from '../src/game/engine.js';
@@ -26,20 +26,16 @@ describe('награды', () => {
     expect(taskReward({ completedAt: d(19, 10), deadline: d(18, 23) })).toBe(1);
     expect(taskReward({ completedAt: d(17, 10) })).toBe(2);
   });
-  it('перенос баланса со старых правил', () => {
-    const from = new Date(2026, 10, 16);
-    const at = { toMillis: () => new Date(2026, 10, 17).getTime() };
-    const tasks = [
-      { id: 'a', assigneeUid: 'me', status: 'done', completedAt: at, checklist: [1, 2, 3], priorityMatrix: { importance: 4, urgency: 1 } },
-      { id: 'b', assigneeUid: 'me', status: 'done', completedAt: at },
-    ];
-    const r = rewardsFor({ tasks }, 'me', from);
-    // по новым: a = 3 строки + 2 важная + 1 в срок, b = 1 + 1 в срок
-    expect(r.coins).toBe(6 + 2);
-    // по старым: a = 3 + 2 (половина важности) + 1 срочная, b = 2
-    expect(carryFor(tasks, 'me', from, { coins: 5 })).toBe(8 - 5);
-    expect(carryFor(tasks, 'me', from, r)).toBe(0);
-    expect(carryFor(tasks, 'me', from, { coins: 100 })).toBe(0);
+  it('неделя смены правил — задача по лучшему из старой и новой цены', () => {
+    const at = (y, m, d) => ({ toMillis: () => new Date(y, m, d).getTime() });
+    const t = (completedAt) => ({ id: 'a', assigneeUid: 'me', status: 'done', completedAt, checklist: [1, 2, 3], priorityMatrix: { importance: 4, urgency: 1 } });
+    // старая: 3 + 2 (половина важности) + 1 срочная = 6; новая: 3 + 2 + 1 в срок = 6
+    const big = { ...t(at(2026, 10, 17)), priorityMatrix: { importance: 6, urgency: 1 } }; // старая 3+3+1 = 7, новая 6
+    expect(rewardsFor({ tasks: [big] }, 'me', new Date(2026, 10, 16)).coins).toBe(7);
+    const small = { id: 'b', assigneeUid: 'me', status: 'done', completedAt: at(2026, 10, 17), deadline: at(2026, 10, 16) }; // старая 2, новая 1
+    expect(rewardsFor({ tasks: [small] }, 'me', new Date(2026, 10, 16)).coins).toBe(2);
+    const nextWeek = { ...small, completedAt: at(2026, 10, 24), deadline: at(2026, 10, 23) };
+    expect(rewardsFor({ tasks: [nextWeek] }, 'me', new Date(2026, 10, 23)).coins).toBe(1);
   });
   const from = new Date(2026, 10, 16);
   const at = (d, h = 12) => ({ toMillis: () => new Date(2026, 10, d, h).getTime() });
