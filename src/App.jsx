@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
 import { auth, provider } from './firebase';
 import { ALLOWED_EMAILS, USERS, userByEmail } from './config';
@@ -28,7 +28,9 @@ import { loadPref, savePref } from './components/Sheet';
 const params = new URLSearchParams(window.location.search);
 // Календарь живёт вкладкой внутри «Задач»: старые ссылки ?tab=calendar ведут туда.
 const RAW_TAB = params.get('tab');
-const START_TAB = RAW_TAB === 'calendar' ? 'tasks' : RAW_TAB;
+// ?tab=wishlist (из расширения) — бюджет, сразу на вкладке «Вишлист»
+if (RAW_TAB === 'wishlist') { try { localStorage.setItem('pref:budgetTab', JSON.stringify('wish')); } catch { /* приватный режим */ } }
+const START_TAB = RAW_TAB === 'calendar' ? 'tasks' : RAW_TAB === 'wishlist' ? 'budget' : RAW_TAB;
 const START_VIEW = RAW_TAB === 'calendar' ? 'calendar' : params.get('view');
 // ?task=<id> — открыть задачу сразу (ссылка из уведомления расширения Chrome).
 const START_TASK = params.get('task');
@@ -154,6 +156,9 @@ export default function App() {
     return info ? { uid: email, email, name: info.name, avatar: info.avatar } : null;
   }, [user]);
 
+  const uiSaved = useRef(null);
+  const [uiLoaded, setUiLoaded] = useState(false);
+
   const users = useMemo(
     () => ALLOWED_EMAILS.map((email) => ({ uid: email, email, name: USERS[email].name, avatar: USERS[email].avatar })),
     []
@@ -178,6 +183,7 @@ export default function App() {
       setCalendarProjectsState(Array.isArray(st.calendarProjects) ? st.calendarProjects : []);
       if (st.notifReadAt) setReadAt((p) => Math.max(p, st.notifReadAt));
       setPushPrefs(st.push || null);
+      if (fromServer) { uiSaved.current = st.ui || null; setUiLoaded(true); }
       // разовый перенос старых локальных настроек в Firestore
       if (fromServer && !migrated) {
         migrated = true;
@@ -191,6 +197,19 @@ export default function App() {
     const unsubN = subscribeNotifications(me.uid, setNotifs);
     return () => { unsub(); unsubN(); };
   }, [me?.uid]);
+
+  // Тема и акцент — ещё и в userState: по ним красится расширение Chrome.
+  // Пишем, только если отличаются от сохранённых (не на каждый запуск).
+  useEffect(() => {
+    if (!me || !uiLoaded) return;
+    const u = uiSaved.current;
+    if (u && u.theme === theme && u.accent === accent) return;
+    const t = setTimeout(() => {
+      uiSaved.current = { theme, accent };
+      saveUserState(me.uid, { ui: { theme, accent } }).catch(() => {});
+    }, 800);
+    return () => clearTimeout(t);
+  }, [me?.uid, uiLoaded, theme, accent]);
 
   // ?task=<id>: один раз дочитываем задачу и открываем её карточку
   useEffect(() => {

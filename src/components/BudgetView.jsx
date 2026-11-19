@@ -15,6 +15,7 @@ import { subscribeRates } from '../lib/fx';
 import { CURRENCIES, CURRENCY_CODES, DEFAULT_BASE, fmtCur, curOf, convert, fxRate, normCode } from '../lib/currency';
 import { convertInput, inputOf } from '../lib/budgetMath';
 import { RecurringList, LimitsSheet, MonthsChart } from './BudgetExtras';
+import { Wishlist } from './Wishlist';
 import { processReceiptPhoto } from '../lib/receipt';
 import { parseMoney, monthTitle, toDate, dayKey, fmtDate, fmtWeekday, isSameDay, uid6 } from '../lib/util';
 
@@ -100,12 +101,13 @@ export function BudgetView({ me, userOf }) {
   return (
     <div>
       <Seg value={tab} onChange={setTab} className="mb"
-        options={[['overview', 'Обзор'], ['ops', 'Операции'], ['plan', 'План'], ['projects', 'Проекты']]} />
+        options={[['overview', 'Обзор'], ['ops', 'Операции'], ['plan', 'План'], ['projects', 'Проекты'], ['wish', 'Вишлист']]} />
 
       {tab === 'overview' && <Overview ctx={ctx} newReceipts={newReceipts} />}
       {tab === 'ops' && <Operations ctx={ctx} />}
       {tab === 'plan' && <Plan ctx={ctx} />}
       {tab === 'projects' && <Projects ctx={ctx} />}
+      {tab === 'wish' && <Wishlist me={me} base={BASE} fx={fx} />}
 
       {walletSheet && <WalletSheet ctx={ctx} wallet={walletSheet === 'new' ? null : walletSheet} onClose={() => setWalletSheet(null)} />}
       {showReceipts && <ReceiptsSheet ctx={ctx} onClose={() => setShowReceipts(false)} />}

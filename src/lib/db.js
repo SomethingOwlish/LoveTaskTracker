@@ -6,7 +6,7 @@ import {
 import { nextFutureRecurrence } from './recurrence';
 import { tsMs } from './util';
 import { buildTaskDoc, assignedNotification } from './taskDoc';
-import { buildMurmurDoc } from './murmurUtil';
+import { buildMurmurDoc, againDoc } from './murmurUtil';
 import { epAtPatch } from './seasons';
 import { cleanEventData } from './calendar';
 import { reportError } from './toast';
@@ -376,6 +376,14 @@ export async function addMurmur(data) {
   const item = buildMurmurDoc(data, { serverTimestamp });
   if (!item) return;
   return addDoc(murmurCol, item);
+}
+// «Повторить» — новая карточка «Заново …», старая остаётся в архиве.
+export async function againMurmur(item, uid) {
+  return addDoc(murmurCol, againDoc(item, uid, { serverTimestamp }));
+}
+// Игра: «Начали» — в процессе; null — снять отметку.
+export async function startMurmur(id, uid) {
+  return updateDoc(doc(db, 'murmur', id), uid ? { startedAt: Timestamp.now(), startedBy: uid } : { startedAt: null, startedBy: null });
 }
 export async function updateMurmur(id, patch) {
   return updateDoc(doc(db, 'murmur', id), patch);

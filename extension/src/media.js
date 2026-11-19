@@ -25,6 +25,13 @@ export function collectPageSignals() {
     ogType: meta('og:type'),
     ogImage: meta('og:image') || meta('twitter:image'),
     h1: (document.querySelector('h1')?.innerText || '').trim().slice(0, 200),
+    siteName: meta('og:site_name'),
+    // цена товара из мета-тегов и микроразметки (для вишлиста, см. shop.js)
+    price: meta('product:price:amount') || meta('og:price:amount')
+      || document.querySelector('[itemprop="price"]')?.getAttribute('content')
+      || document.querySelector('[itemprop="price"]')?.textContent?.trim()?.slice(0, 40) || '',
+    currency: meta('product:price:currency') || meta('og:price:currency')
+      || document.querySelector('[itemprop="priceCurrency"]')?.getAttribute('content') || '',
     ld,
   };
 }
