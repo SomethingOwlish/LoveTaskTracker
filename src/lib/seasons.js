@@ -4,7 +4,8 @@
 // В записи Мурмура:
 //   seasons:  [{ n: 1, eps: 10, aired: 10 }, …] — номер сезона, серий всего, вышло;
 //   tvStatus: 'ended' | 'ongoing' | null;
-//   watched:  { s1: [1, 2, 3], s2: [1] } — какие серии посмотрели (вместе, отметка общая).
+//   watched:  { s1: [1, 2, 3], s2: [1] } — какие серии посмотрели (вместе, отметка общая);
+//   epAt:     { s1e3: 1763...ms } — когда серию отметили (для монет в игре).
 // Спецвыпуски (сезон 0) не берём. У старых записей seasons/watched нет — всё работает.
 
 // /tv/{id} в TMDB → { seasons, tvStatus }
@@ -106,4 +107,22 @@ export function watchedUpTo(item, n, e) {
     out[seasonKey(s.n)] = [...set].sort((a, b) => a - b);
   }
   return out;
+}
+
+export const epKey = (s, e) => `s${s}e${e}`;
+
+// Патч для epAt при смене watched: новым отметкам — время, снятым — del.
+// Ключи с точкой — для updateDoc ('epAt.s1e3').
+export function epAtPatch(oldWatched, newWatched, now, del) {
+  const patch = {};
+  const keys = new Set([...Object.keys(oldWatched || {}), ...Object.keys(newWatched || {})]);
+  keys.forEach((k) => {
+    const n = Number(k.slice(1));
+    if (!Number.isInteger(n)) return;
+    const before = new Set(Array.isArray(oldWatched?.[k]) ? oldWatched[k] : []);
+    const after = new Set(Array.isArray(newWatched?.[k]) ? newWatched[k] : []);
+    after.forEach((e) => { if (!before.has(e)) patch[`epAt.${epKey(n, e)}`] = now; });
+    before.forEach((e) => { if (!after.has(e)) patch[`epAt.${epKey(n, e)}`] = del; });
+  });
+  return patch;
 }

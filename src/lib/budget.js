@@ -113,6 +113,8 @@ const onWallets = (list, snap, cb) => {
 export const subscribeTxRange = (from, to, cb) => sub(
   query(txCol, where('date', '>=', Timestamp.fromDate(from)), where('date', '<', Timestamp.fromDate(to))), cb, byDateDesc);
 // Все запланированные (их немного, и нужны просроченные из прошлых месяцев)
+// Записи, внесённые с даты from (по времени создания, а не дате операции) — для игры.
+export const subscribeTxCreatedSince = (from, cb) => sub(query(txCol, where('createdAt', '>=', Timestamp.fromDate(from))), cb);
 export const subscribePlanned = (cb) => sub(query(txCol, where('planned', '==', true)), cb, byDateDesc);
 // Операции одного проекта — только когда проект открыт
 export const subscribeProjectTx = (projectId, cb) => sub(query(txCol, where('projectId', '==', projectId)), cb, byDateDesc);
