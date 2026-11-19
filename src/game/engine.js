@@ -19,8 +19,9 @@
    ============================================================ */
 import SPECIES from './species.json';
 import GIANTS from './giants.json';
+import { stepCoins } from '../lib/steps.js';
 
-export { SPECIES, GIANTS };
+export { SPECIES, GIANTS, stepCoins };
 export const BY_ID = Object.fromEntries(SPECIES.map((s) => [s.id, s]));
 
 /* ---------------- Редкость: цвет, цена и сила ---------------- */
@@ -324,7 +325,7 @@ function closedBy(tasks, uid, since) {
 
 export const NEW_RULES_WEEK = '2026-11-23'; // с этой недели — только новые правила
 
-export function rewardsFor({ tasks = [], moods = [], media = [], tx = [] }, uid, from) {
+export function rewardsFor({ tasks = [], moods = [], media = [], tx = [], steps = [] }, uid, from) {
   const since = from.getTime();
   const fromKey = dayStr(from);
 
@@ -356,13 +357,20 @@ export function rewardsFor({ tasks = [], moods = [], media = [], tx = [] }, uid,
   const receipts = myTx.filter((t) => t.receiptId).length;
   const budgetCoins = budgetDays * REWARD.budgetDay + receipts * REWARD.receipt;
 
+  const stepDays = steps
+    .filter((d) => d.uid === uid && d.day >= fromKey && daysBetween(fromKey, d.day) < 7)
+    .map((d) => ({ day: d.day, steps: d.steps || 0, coins: stepCoins(d.steps || 0) }))
+    .sort((a, b) => (a.day < b.day ? -1 : 1));
+  const stepCoinsSum = stepDays.reduce((n, d) => n + d.coins, 0);
+
   return {
-    coins: taskCoins + moodCoins + mediaCoins + budgetCoins,
+    coins: taskCoins + moodCoins + mediaCoins + budgetCoins + stepCoinsSum,
     list,
     tasks: taskCoins,
     mood: { days: moodDays, pairDays, coins: moodCoins },
     media: { list: seen, episodes, coins: mediaCoins },
     budget: { days: budgetDays, receipts, coins: budgetCoins },
+    steps: { days: stepDays, total: stepDays.reduce((n, d) => n + d.steps, 0), coins: stepCoinsSum },
   };
 }
 

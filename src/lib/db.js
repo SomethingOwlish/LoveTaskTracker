@@ -325,6 +325,26 @@ export function subscribeMoods(fromKey, toKey, cb) {
   const q = query(collection(db, 'moods'), where('day', '>=', fromKey), where('day', '<=', toKey));
   return listen(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
+/* ---------------- Шаги с iPhone ----------------
+   steps/{uid}_{день} пишет воркер (/api/steps) по личному ключу stepKeys/{ключ}. */
+// Обоих за неделю (≤14 документов) и фильтр на клиенте: uid + диапазон дней
+// в одном запросе потребовали бы составной индекс.
+export function subscribeSteps(uid, fromKey, toKey, cb) {
+  const q = query(collection(db, 'steps'), where('day', '>=', fromKey), where('day', '<=', toKey));
+  return listen(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((d) => !uid || d.uid === uid)));
+}
+export function subscribeStepKeys(uid, cb) {
+  return listen(query(collection(db, 'stepKeys'), where('uid', '==', uid)), (snap) => cb(snap.docs.map((d) => ({ key: d.id, ...d.data() }))));
+}
+// Новый ключ: 32 случайных символа [a-z0-9]. Старые удаляем — работает только один.
+export async function newStepKey(uid, old = []) {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const key = Array.from(bytes, (b) => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('');
+  await setDoc(doc(db, 'stepKeys', key), { uid, createdAt: serverTimestamp() });
+  await Promise.all(old.map((k) => deleteDoc(doc(db, 'stepKeys', k))));
+  return key;
+}
+
 export function subscribeMoodLegends(cb) {
   return listen(collection(db, 'moodLegends'), (snap) => {
     const map = {};
