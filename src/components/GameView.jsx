@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { subscribeUserState, saveGame, saveUserState, subscribeMoods, subscribeMurmur } from '../lib/db';
+import { subscribeUserState, saveGame, saveUserState, subscribeMoods, subscribeMurmur, subscribeSteps } from '../lib/db';
 import { subscribeTxCreatedSince } from '../lib/budget';
 import { toast, reportError } from '../lib/toast';
 import { Sheet } from './Sheet';
@@ -352,14 +352,16 @@ export function GameView({ tasks, me, users }) {
   const [moods, setMoods] = useState(null);
   const [media, setMedia] = useState(null);
   const [tx, setTx] = useState(null);
+  const [steps, setSteps] = useState(null);
   useEffect(() => subscribeMoods(week, dayStr(new Date(weekStart().getTime() + 6 * 864e5)), setMoods), [week]);
   useEffect(() => subscribeMurmur(setMedia), []);
   useEffect(() => subscribeTxCreatedSince(weekStart(), setTx), [week]);
-  const sourcesReady = moods !== null && media !== null && tx !== null;
+  useEffect(() => subscribeSteps(me.uid, week, dayStr(new Date(weekStart().getTime() + 6 * 864e5)), setSteps), [week, me.uid]);
+  const sourcesReady = moods !== null && media !== null && tx !== null && steps !== null;
 
   const rewards = useMemo(
-    () => rewardsFor({ tasks, moods: moods || [], media: media || [], tx: tx || [] }, me.uid, weekStart()),
-    [tasks, moods, media, tx, me.uid],
+    () => rewardsFor({ tasks, moods: moods || [], media: media || [], tx: tx || [], steps: steps || [] }, me.uid, weekStart()),
+    [tasks, moods, media, tx, steps, me.uid],
   );
 
   const stored = state?.game;
@@ -695,11 +697,13 @@ export function GameView({ tasks, me, users }) {
           <div className="pm-income"><span><i className="fa-solid fa-face-smile" /> Настроение <span className="dim">· {rewards.mood.days} из 7 дней{rewards.mood.pairDays ? `, вместе ${rewards.mood.pairDays}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.mood.coins}</b></div>
           <div className="pm-income"><span><i className="fa-solid fa-film" /> Мурмур <span className="dim">· {rewards.media.list.length}{rewards.media.episodes ? `, серий ${rewards.media.episodes}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.media.coins}</b></div>
           <div className="pm-income"><span><i className="fa-solid fa-wallet" /> Бюджет <span className="dim">· {rewards.budget.days} дн.{rewards.budget.receipts ? `, чеков ${rewards.budget.receipts}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.budget.coins}</b></div>
+          <div className="pm-income"><span><i className="fa-solid fa-shoe-prints" /> Шаги <span className="dim">· {rewards.steps.days.length ? rewards.steps.days.map((d) => `${Math.round(d.steps / 100) / 10}к`).join(', ') : 'нет данных'}</span></span><b><i className="fa-solid fa-coins" /> {rewards.steps.coins}</b></div>
           <p className="hint">
             Задача — 1 монета, с подзадачами — монета за каждую подзадачу; важная или срочная — ещё +2; закрыта в срок — ещё +1.
             Настроение — 1 за каждый отмеченный день, +1, если отмечена вся неделя, и +2 за день, когда отметились оба.
             Мурмур: фильм или досмотренный сериал — 1, пройденная игра — 10, серия — ½ (за неделю вниз), свой отзыв — ещё +1.
             День, когда что-то внесено в бюджет, — 1; разобранный чек — ещё +1.
+            Шаги за день: от 5 000 — 5 монет, после 10 000 — +1 за каждую тысячу (настройка — Профиль → Шаги с iPhone).
             На старте недели — {startCoinsOf(run)} монет. Каждый новый день: проценты с отложенного (+1 за 10, до +5) и +{DAILY_XP} опыта.
             Всё остальное — особи, опыт, перебросы и лишние вылазки — покупается за монеты.
           </p>
