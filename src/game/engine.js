@@ -97,13 +97,6 @@ export const REGIONS = {
   zvezdopad: { name: 'Звездопад', icon: 'fa-star', steps: [3, 5], v: [3, 6], text: (x) => `звёздное спокойствие: гневу нужно на ${x} больше` },
 };
 
-// Размер команды: большие команды получают свои бонусы.
-export const SIZE_BONUS = [
-  { n: 9, name: 'Стая', atk: 0.1, shield: 8, wrath: 0, text: '+10% урона и щит 8 строю' },
-  { n: 11, name: 'Великая стая', atk: 0.15, shield: 15, wrath: 2, text: '+15% урона, щит 15 и гнев копится медленнее' },
-];
-export const sizeBonus = (n) => [...SIZE_BONUS].reverse().find((b) => n >= b.n) || null;
-
 // Личный навык особи по её группе навыков: срабатывает на 3-м, 6-м и 9-м раундах.
 export const SKILLS = {
   damage: { name: 'Удар', text: 'бьёт вдвое' },
@@ -313,7 +306,8 @@ export function rewardsFor({ tasks = [], moods = [], media = [], tx = [] }, uid,
 
   const list = [];
   tasks.forEach((t) => {
-    if (t.assigneeUid !== uid) return;
+    // Монеты тому, кто закрыл (старые задачи без completedBy — исполнителю).
+    if ((t.completedBy || t.assigneeUid) !== uid) return;
     if (t.status !== 'done' && t.status !== 'approved') return;
     const at = msOf(t.completedAt);
     if (!at || at < since) return;
@@ -582,7 +576,6 @@ export function simulateRaid(team, giant, day, seed) {
   const cl = (k) => bondValue(B, 'cl', k);
   const fam = (k) => bondValue(B, 'fam', k);
   const reg = (k) => bondValue(B, 'reg', k);
-  const size = sizeBonus(units.length);
   const kids = new Set(giant.kids);
   const aura = giant.id;
 
@@ -617,13 +610,13 @@ export function simulateRaid(team, giant, day, seed) {
   }
 
   // начало боя: щиты земли, чешуи и большой стаи
-  const startShield = el('earth') + fam('reptiles') + (size?.shield || 0);
+  const startShield = el('earth') + fam('reptiles');
   if (startShield) front.forEach((f) => { f.shield = startShield; });
-  const baseAtk = 1 + cl('guide') + (size?.atk || 0);
+  const baseAtk = 1 + cl('guide');
   const pressure = aura === 'tot_kto_derzhit_nebo' ? 0.85 : 1;
   const giantMiss = el('sound') + fam('bats');
   const thorns = el('plants') + fam('mustelids');
-  const wrathMax = WRATH_MAX + reg('zvezdopad') + (size?.wrath || 0);
+  const wrathMax = WRATH_MAX + reg('zvezdopad');
   const maxRounds = BASE_ROUNDS + reg('trakt_puteshestvennikov');
   log(`${giant.name} выходит навстречу. ${giant.auraText}`, { kind: 'start' });
   const misplaced = all.filter((f) => f.eff < 1);

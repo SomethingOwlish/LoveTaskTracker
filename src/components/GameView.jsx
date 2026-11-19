@@ -5,10 +5,10 @@ import { toast, reportError } from '../lib/toast';
 import { Sheet } from './Sheet';
 import { Avatar } from './Avatar';
 import {
-  SPECIES, BY_ID, GIANTS, ELEMENTS, CLASSES, FAMILIES, REGIONS, SKILLS, SIZE_BONUS, RARITY, PLACE,
+  SPECIES, BY_ID, GIANTS, ELEMENTS, CLASSES, FAMILIES, REGIONS, SKILLS, RARITY, PLACE,
   FRONT_SIZE, BACK_SIZE, BENCH_SIZE, REROLL_COST, XP_BUY, GIANT_HP, LEVEL_XP, DAILY_XP, MAX_STARS, MISPLACED,
   newRun, normalizeRun, START_COINS, makePack, repack, isFresh, economy, rewardsFor, ensureShop, buy, sell, move, reroll, buyXp,
-  teamOf, bonds, sizeBonus, tick, interestFor, simulateRaid, giantOf, weekKey, weekStart, dayStr, dayIndex,
+  teamOf, bonds, tick, interestFor, simulateRaid, giantOf, weekKey, weekStart, dayStr, dayIndex,
   unitCost, offerCost, oddsFor, battleHp, statsOf, imgOf, formOf, placeOf, fits, isWeekend, ENGINE_V,
   fightCost, fightsOn, giantPower,
 } from '../game/engine';
@@ -91,20 +91,11 @@ function UnitTile({ unit, row, selected, target, dim, onClick, kid, compact }) {
 function Bonds({ units, giant }) {
   const list = bonds(units);
   const [allOff, setAllOff] = useState(false);
-  const size = sizeBonus(units.length);
-  const nextSize = SIZE_BONUS.find((b) => b.n > units.length);
   const on = list.filter((b) => b.tier).sort((a, b) => b.tier - a.tier || b.n - a.n);
   const off = list.filter((b) => !b.tier).sort((a, b) => (b.n / b.def.steps[0]) - (a.n / a.def.steps[0]));
   if (!list.length) return <p className="hint">Связи появятся, когда в команде соберутся особи с общей стихией, классом, семейством или регионом.</p>;
   return (
     <div className="pm-bonds">
-      {/* размер команды — только когда бонус включён или до «Стаи» осталось две особи */}
-      {(size || units.length >= SIZE_BONUS[0].n - 2) && <div className={`pm-bond size ${size ? 'on' : ''}`}>
-        <i className="fa-solid fa-people-group" />
-        <b>{size ? size.name : 'Размер команды'}</b>
-        <span className="pm-steps">{SIZE_BONUS.map((b) => <i key={b.n} className={units.length >= b.n ? 'on' : ''}>{b.n}</i>)}</span>
-        <span className="pm-bond-text">{size ? size.text : ''}{nextSize ? `${size ? ' · ' : ''}с ${nextSize.n}: ${nextSize.text}` : ''}</span>
-      </div>}
       {on.map((x) => (
         <div key={x.kind + x.key} className="pm-bond on">
           <i className={`fa-solid ${x.def.icon}`} style={x.def.color ? { color: x.def.color } : undefined} />

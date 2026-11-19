@@ -1,4 +1,4 @@
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, writeBatch, deleteField,
   onSnapshot, query, orderBy, where, limit, serverTimestamp, Timestamp, arrayUnion, arrayRemove,
@@ -173,6 +173,10 @@ async function closeWithRecurrence(task, status) {
   // serverTimestamp локально равен null и задача выпала бы из запроса «закрытые
   // за неделю» (а без сети — пропала бы до синхронизации).
   const patch = { status, completedAt: Timestamp.now(), updatedAt: serverTimestamp() };
+  // Кто закрыл — ему монеты в игре. При «Принять» закрывает автор, а сделал
+  // исполнитель, поэтому там completedBy — исполнитель.
+  const me = auth.currentUser?.email?.toLowerCase() || null;
+  patch.completedBy = status === 'approved' ? task.assigneeUid : (me || task.assigneeUid);
   const repeats = task.recurrence && task.recurrence !== 'none';
   if (repeats && !task.nextTaskId) {
     const nextRef = doc(tasksCol);
@@ -192,6 +196,7 @@ export async function undoComplete(task, result) {
   const patch = { status: task.status, updatedAt: serverTimestamp() };
   if (result?.kind === 'closed') {
     patch.completedAt = null;
+    patch.completedBy = deleteField();
     patch.nextTaskId = deleteField();
     if (result.nextTaskId) {
       try {
@@ -231,7 +236,7 @@ function recurrenceCopy(task) {
 }
 
 export async function reopenTask(task) {
-  const patch = { status: 'open', completedAt: null, updatedAt: serverTimestamp() };
+  const patch = { status: 'open', completedAt: null, completedBy: deleteField(), updatedAt: serverTimestamp() };
   // откат: если при закрытии поставилась следующая копия и её ещё не трогали — убираем
   if (task.nextTaskId) {
     try {

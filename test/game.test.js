@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   SPECIES, BY_ID, GIANTS, RARITY, newRun, economy, rewardsFor, taskReward, ensureShop, buy, sell, move, mergeAll,
   simulateRaid, giantOf, levelOf, teamSize, tick, START_COINS, BENCH_SIZE, BACK_SIZE, MAX_TEAM, reroll, bonds,
-  fightCost, makePack, repack, rollShop, statsOf, placeOf, fits, normalizeRun, sizeBonus, PACK_SIZE,
+  fightCost, makePack, repack, rollShop, statsOf, placeOf, fits, normalizeRun, PACK_SIZE,
 } from '../src/game/engine.js';
 
 const NONE = { coins: 0 };
@@ -35,10 +35,12 @@ describe('награды', () => {
       { id: 'c', assigneeUid: 'me', status: 'done', completedAt: at(10) },
       { id: 'd', assigneeUid: 'you', status: 'done', completedAt: at(17) },
       { id: 'e', assigneeUid: 'me', status: 'open' },
+      { id: 'f', assigneeUid: 'you', completedBy: 'me', status: 'done', completedAt: at(19), recurrence: 'daily', checklist: [{ done: true }, { done: true }] },
+      { id: 'g', assigneeUid: 'me', completedBy: 'you', status: 'done', completedAt: at(19) },
     ];
     const r = rewardsFor({ tasks }, 'me', from);
-    expect(r.coins).toBe(4);
-    expect(r.list.map((x) => x.id)).toEqual(['b', 'a']);
+    expect(r.coins).toBe(4 + 2);
+    expect(r.list.map((x) => x.id)).toEqual(['f', 'b', 'a']);
   });
   it('настроение — монета за день и +1 за всю неделю', () => {
     const mood = (uid, day) => ({ uid, day: `2026-11-${day}` });
@@ -218,11 +220,6 @@ describe('связи', () => {
     const b = bonds(fire);
     expect(b.find((x) => x.kind === 'el' && x.key === 'fire').tier).toBe(3);
     expect(new Set(b.map((x) => x.kind))).toEqual(new Set(['el', 'cl', 'fam', 'reg']));
-  });
-  it('бонус размера команды с девяти', () => {
-    expect(sizeBonus(8)).toBeNull();
-    expect(sizeBonus(9).name).toBe('Стая');
-    expect(sizeBonus(11).name).toBe('Великая стая');
   });
 });
 
