@@ -12,6 +12,7 @@
 // все остальные запросы — бесплатная статика и в лимит воркеров не входят.
 
 import { handleMedia } from './media.js';
+import { handleGacha } from './gacha.js';
 import { handleSteps } from './steps.js';
 
 const FIREBASE_HOST = 'tasktrackergando.firebaseapp.com';
@@ -21,6 +22,11 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/api/media') {
       try { return await handleMedia(request, env); } catch (e) {
+        return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 502, headers: { 'content-type': 'application/json' } });
+      }
+    }
+    if (url.pathname === '/api/gacha') {
+      try { return await handleGacha(request); } catch (e) {
         return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 502, headers: { 'content-type': 'application/json' } });
       }
     }

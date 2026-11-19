@@ -145,6 +145,33 @@ service cloud.firestore {
       allow read, write: if allowed();
     }
 
+    // ---------- Гача-трекер ----------
+    // id документов: «{email}_{игра}» (+ «_{копилка}_{кусок}» у истории).
+    // Читать можно обоим (посмотреть крутки друг друга), писать — только своё.
+    function ownGachaDoc(id) {
+      return id.matches(me() + '_.*') && request.resource.data.uid == me()
+        && request.resource.data.game in ['genshin', 'hsr', 'endfield'];
+    }
+    // сводка: pity, топ-дропы, поправки 50/50
+    match /gacha/{id} {
+      allow read: if allowed();
+      allow create, update: if allowed() && ownGachaDoc(id);
+      allow delete: if allowed() && id.matches(me() + '_.*');
+    }
+    // полная история круток кусками — читается только при импорте и в архиве
+    match /gachaLog/{id} {
+      allow read: if allowed();
+      allow create, update: if allowed() && ownGachaDoc(id) && request.resource.data.pulls is list;
+      allow delete: if allowed() && id.matches(me() + '_.*');
+    }
+    // план развития персонажей и отряды
+    match /gachaRoster/{id} {
+      allow read: if allowed();
+      allow create, update: if allowed() && ownGachaDoc(id)
+        && request.resource.data.chars is list && request.resource.data.teams is list;
+      allow delete: if allowed() && id.matches(me() + '_.*');
+    }
+
     // ---------- Вишлист ----------
     match /wishlist/{id} {
       allow read, delete: if allowed();
