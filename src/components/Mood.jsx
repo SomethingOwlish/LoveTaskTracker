@@ -2,35 +2,52 @@ import { useEffect, useMemo, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Sheet, Seg } from './Sheet';
 import { DOW, monthTitle, isSameDay, dayKey, fromDayKey, fmtDate, fmtWeekday, uid6 } from '../lib/util';
-import { saveMoodLegend, setMood, clearMood, setMoodNote, subscribeMoods, subscribeDoneOnDay } from '../lib/db';
+import { saveMoodLegend, setMood, clearMood, setMoodNote, subscribeMoods, subscribeDoneOnDay, subscribeMyMood } from '../lib/db';
+import { toast } from '../lib/toast';
+import {
+  DEFAULT_MOOD_LEGEND, MAX_MOODS_PER_DAY, legendOf, resolveMood, moodIndex, moodItems, moodIds,
+  toggleMoodItem, moodCellStyle, monthCounts, missingDefaults, shouldRemind,
+} from '../lib/mood';
 
-// Легенда по умолчанию — пока человек не настроил свою.
-export const DEFAULT_MOOD_LEGEND = [
-  { id: 'great', color: '#f2c14e', label: 'Отлично' },
-  { id: 'good', color: '#8cc084', label: 'Хорошо' },
-  { id: 'calm', color: '#7fa7d1', label: 'Спокойно' },
-  { id: 'tired', color: '#a58bc9', label: 'Устал(а)' },
-  { id: 'sad', color: '#5f6f94', label: 'Грустно' },
-  { id: 'angry', color: '#d9675b', label: 'Раздражение' },
-];
+export { DEFAULT_MOOD_LEGEND, legendOf, resolveMood, moodIndex };
 
-export function legendOf(legends, uid) {
-  const l = legends?.[uid];
-  return l && l.length ? l : DEFAULT_MOOD_LEGEND;
+/* ---------- Выбор цветов дня ---------- */
+// Нажатие добавляет или снимает цвет; за день можно выбрать несколько.
+function MoodPicker({ legend, mine, onChange, collapse = 0 }) {
+  const ids = moodIds(mine);
+  const [all, setAll] = useState(false);
+  const hidden = collapse && !all ? legend.slice(collapse).filter((it) => !ids.includes(it.id)) : [];
+  const shown = hidden.length ? legend.filter((it) => !hidden.includes(it)) : legend;
+  return (
+    <>
+      <div className="mood-picker">
+        {shown.map((it) => (
+          <button
+            key={it.id}
+            type="button"
+            className={`mood-chip ${ids.includes(it.id) ? 'on' : ''}`}
+            style={{ '--mc': it.color }}
+            aria-pressed={ids.includes(it.id)}
+            onClick={() => onChange(toggleMoodItem(moodItems(mine), it))}
+          >
+            <span className="mood-dot" />{it.label}
+          </button>
+        ))}
+        {hidden.length > 0 && (
+          <button type="button" className="mood-chip more" onClick={() => setAll(true)}>ещё {hidden.length}…</button>
+        )}
+      </div>
+      {ids.length > 0 && (
+        <p className="hint" style={{ marginBottom: 0 }}>
+          {ids.length >= MAX_MOODS_PER_DAY ? `Максимум ${MAX_MOODS_PER_DAY} цвета — следующий заменит самый первый.` : 'Можно выбрать несколько цветов.'}
+        </p>
+      )}
+    </>
+  );
 }
 
-// Отметка дня, показанная по легенде её владельца (подпись и цвет — из его
-// текущей легенды; если пункт удалён — из снимка в самой записи).
-export function resolveMood(mood, legends) {
-  if (!mood) return null;
-  const item = legendOf(legends, mood.uid).find((x) => x.id === mood.itemId);
-  return { color: item?.color || mood.color, label: item?.label || mood.label, note: mood.note || '' };
-}
-
-export function moodIndex(moods) {
-  const m = {};
-  moods.forEach((x) => { m[`${x.uid}_${x.day}`] = x; });
-  return m;
+function MoodDots({ mood }) {
+  return <span className="mood-dots">{mood.items.map((x) => <span key={x.id} className="mood-dot" style={{ background: x.color }} />)}</span>;
 }
 
 /* ---------- Виджет «Настроение сегодня» (на экране «Сегодня») ---------- */
@@ -41,34 +58,28 @@ export function MoodTodayWidget({ me, partner, moods, legends }) {
   const theirs = partner ? resolveMood(idx[`${partner.uid}_${today}`], legends) : null;
   const legend = legendOf(legends, me.uid);
   const [sheet, setSheet] = useState(false);
+  const marked = moodItems(mine).length > 0;
 
   return (
-    <div className="card mood-today">
+    <div className={`card mood-today ${marked ? '' : 'remind'}`}>
       <div className="mood-today-head">
         <span className="section-title" style={{ margin: 0 }}>Настроение сегодня</span>
         {partner && (
           <span className="mood-partner" title={theirs ? theirs.label : 'ещё не отметил(а)'}>
             <Avatar email={partner.email} avatar={partner.avatar} />
             {theirs
-              ? <><span className="mood-dot" style={{ background: theirs.color }} /> {theirs.label}</>
+              ? <><MoodDots mood={theirs} /> <span className="mood-partner-label">{theirs.label}</span></>
               : <span style={{ color: 'var(--text-dim)' }}>—</span>}
           </span>
         )}
       </div>
-      <div className="mood-picker">
-        {legend.map((it) => (
-          <button
-            key={it.id}
-            type="button"
-            className={`mood-chip ${mine?.itemId === it.id ? 'on' : ''}`}
-            style={{ '--mc': it.color }}
-            onClick={() => (mine?.itemId === it.id ? setSheet(true) : setMood(me.uid, today, it, mine?.note))}
-          >
-            <span className="mood-dot" />{it.label}
-          </button>
-        ))}
-      </div>
-      {mine && (
+      {!marked && (
+        <div className="mood-remind">
+          <i className="fa-solid fa-palette" /> Сегодня ещё без отметки. Каким был день? Выбери один или несколько цветов.
+        </div>
+      )}
+      <MoodPicker legend={legend} mine={mine} collapse={8} onChange={(items) => setMood(me.uid, today, items, mine?.note)} />
+      {marked && (
         <button type="button" className="link-btn" onClick={() => setSheet(true)}>
           {mine.note ? `«${mine.note}»` : '+ заметка о дне'}
         </button>
@@ -76,6 +87,43 @@ export function MoodTodayWidget({ me, partner, moods, legends }) {
       {sheet && <MoodDaySheet day={today} me={me} partner={partner} idx={idx} legends={legends} onClose={() => setSheet(false)} />}
     </div>
   );
+}
+
+/* ---------- Напоминание при входе ---------- */
+// Раз в день, если своё настроение за сегодня не отмечено, — тост с кнопкой,
+// которая сразу открывает отметку дня (с любого экрана).
+export function MoodReminder({ me, partner, moods, legends }) {
+  const [today, setToday] = useState(dayKey());
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState({ loaded: false, marked: false });
+  useEffect(() => {
+    const upd = () => setToday(dayKey());
+    document.addEventListener('visibilitychange', upd);
+    return () => document.removeEventListener('visibilitychange', upd);
+  }, []);
+  useEffect(() => {
+    setState({ loaded: false, marked: false });
+    return subscribeMyMood(me.uid, today, (m, fromServer) => setState((p) => ({
+      loaded: p.loaded || fromServer, marked: moodItems(m).length > 0,
+    })));
+  }, [me.uid, today]);
+
+  const key = 'moodReminded:' + me.uid;
+  useEffect(() => {
+    let remindedDay = null;
+    try { remindedDay = localStorage.getItem(key); } catch { /* приватный режим */ }
+    if (!shouldRemind({ ...state, remindedDay, today })) return;
+    const t = setTimeout(() => {
+      try { localStorage.setItem(key, today); } catch { /* приватный режим */ }
+      toast('Настроение за сегодня ещё не отмечено — каким был день?', {
+        ms: 12000, action: { label: 'Отметить', fn: () => setOpen(true) },
+      });
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [state, today, key]);
+
+  const idx = useMemo(() => moodIndex(moods || []), [moods]);
+  return open ? <MoodDaySheet day={today} me={me} partner={partner} idx={idx} legends={legends} onClose={() => setOpen(false)} /> : null;
 }
 
 /* ---------- Календарь настроений ---------- */
@@ -107,13 +155,7 @@ export function MoodCalendar({ me, partner, legends }) {
   const monthStats = useMemo(() => {
     if (!statsUid) return [];
     const legend = legendOf(legends, statsUid);
-    const counts = {};
-    moods.forEach((m) => {
-      if (m.uid !== statsUid) return;
-      const d = fromDayKey(m.day);
-      if (d.getMonth() !== cursor.getMonth() || d.getFullYear() !== cursor.getFullYear()) return;
-      counts[m.itemId] = (counts[m.itemId] || 0) + 1;
-    });
+    const counts = monthCounts(moods, statsUid, cursor.getFullYear(), cursor.getMonth());
     return legend.map((it) => ({ ...it, n: counts[it.id] || 0 })).filter((x) => x.n > 0);
   }, [moods, legends, statsUid, cursor]);
 
@@ -121,12 +163,7 @@ export function MoodCalendar({ me, partner, legends }) {
     const k = dayKey(d);
     const a = resolveMood(idx[`${me.uid}_${k}`], legends);
     const b = partner ? resolveMood(idx[`${partner.uid}_${k}`], legends) : null;
-    if (whose === 'me') return a ? { background: a.color } : undefined;
-    if (whose === 'partner') return b ? { background: b.color } : undefined;
-    if (a && b) return { background: `linear-gradient(135deg, ${a.color} 50%, ${b.color} 50%)` };
-    if (a) return { background: `linear-gradient(135deg, ${a.color} 50%, transparent 50%)` };
-    if (b) return { background: `linear-gradient(135deg, transparent 50%, ${b.color} 50%)` };
-    return undefined;
+    return moodCellStyle(a, b, whose);
   };
 
   return (
@@ -163,7 +200,7 @@ export function MoodCalendar({ me, partner, legends }) {
           );
         })}
       </div>
-      {whose === 'both' && <p className="hint">Левый верхний угол — {me.name}, правый нижний — {partner?.name}.</p>}
+      {whose === 'both' && <p className="hint">Верхняя половина дня — {me.name}, нижняя — {partner?.name}. Несколько цветов за день — полосками.</p>}
 
       {monthStats.length > 0 && (
         <>
@@ -209,30 +246,24 @@ function MoodDaySheet({ day, me, partner, idx, legends, onClose }) {
   const legend = legendOf(legends, me.uid);
   const d = fromDayKey(day);
 
-  const pick = (it) => setMood(me.uid, day, it, note);
+  const marked = moodItems(mine).length > 0;
 
   // что успели сделать в этот день — помогает вспомнить, каким он был
   const [done, setDone] = useState(null);
   useEffect(() => subscribeDoneOnDay(day, setDone), [day]);
   const doneBy = (uid) => (done || []).filter((t) => t.assigneeUid === uid && (t.status === 'done' || t.status === 'approved'));
-  const saveNote = () => { if (mine && note !== (mine.note || '')) setMoodNote(me.uid, day, note); };
+  const saveNote = () => { if (marked && note !== (mine.note || '')) setMoodNote(me.uid, day, note); };
 
   return (
     <Sheet title={`${fmtDate(d)}, ${fmtWeekday(d)}`} onClose={() => { saveNote(); onClose(); }}>
       <div className="section-title" style={{ marginTop: 0 }}>Моё настроение</div>
-      <div className="mood-picker">
-        {legend.map((it) => (
-          <button key={it.id} type="button" className={`mood-chip ${mine?.itemId === it.id ? 'on' : ''}`} style={{ '--mc': it.color }} onClick={() => pick(it)}>
-            <span className="mood-dot" />{it.label}
-          </button>
-        ))}
-      </div>
+      <MoodPicker legend={legend} mine={mine} onChange={(items) => setMood(me.uid, day, items, note)} />
       <div className="field" style={{ marginTop: 12 }}>
         <label>Заметка</label>
-        <textarea className="input" value={note} disabled={!mine} placeholder={mine ? 'Как прошёл день?' : 'Сначала выбери цвет'}
+        <textarea className="input" value={note} disabled={!marked} placeholder={marked ? 'Как прошёл день?' : 'Сначала выбери цвет'}
           onChange={(e) => setNote(e.target.value)} onBlur={saveNote} />
       </div>
-      {mine && (
+      {marked && (
         <button className="btn btn-ghost btn-sm" style={{ color: 'var(--bad)' }} onClick={() => { clearMood(me.uid, day); onClose(); }}>
           Убрать отметку
         </button>
@@ -260,7 +291,9 @@ function MoodDaySheet({ day, me, partner, idx, legends, onClose }) {
           <div className="section-title">{partner.name}</div>
           {theirs ? (
             <div className="card">
-              <span className="chip"><span className="mood-dot" style={{ background: theirs.color }} />{theirs.label}</span>
+              <div className="chips">
+                {theirs.items.map((x) => <span key={x.id} className="chip"><span className="mood-dot" style={{ background: x.color }} />{x.label}</span>)}
+              </div>
               {theirs.note && <p style={{ margin: '8px 0 0' }}>«{theirs.note}»</p>}
             </div>
           ) : <p className="hint">Пока без отметки.</p>}
@@ -273,6 +306,7 @@ function MoodDaySheet({ day, me, partner, idx, legends, onClose }) {
 /* ---------- Редактор своей легенды ---------- */
 function LegendEditor({ uid, legend, onClose }) {
   const [items, setItems] = useState(() => legend.map((x) => ({ ...x })));
+  const suggest = missingDefaults(items);
   const upd = (id, patch) => setItems((p) => p.map((x) => (x.id === id ? { ...x, ...patch } : x)));
   const save = async () => {
     const clean = items.map((x) => ({ ...x, label: x.label.trim() || 'Без названия' }));
@@ -299,6 +333,18 @@ function LegendEditor({ uid, legend, onClose }) {
       <button type="button" className="btn btn-block" onClick={() => setItems((p) => [...p, { id: uid6(), color: '#888888', label: '' }])}>
         + Добавить цвет
       </button>
+      {suggest.length > 0 && (
+        <>
+          <div className="section-title">Добавить из набора</div>
+          <div className="chips">
+            {suggest.map((it) => (
+              <button key={it.id} type="button" className="chip as-btn" onClick={() => setItems((p) => [...p, { ...it }])}>
+                <span className="mood-dot" style={{ background: it.color }} />+ {it.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </Sheet>
   );
 }

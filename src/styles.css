@@ -601,6 +601,19 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 .mood-cell { overflow: hidden; }
 .mood-cell span { background: color-mix(in srgb, var(--surface) 70%, transparent); border-radius: 6px; padding: 0 4px; align-self: flex-start; }
 .mood-cell:disabled { opacity: 0.35; }
+.mood-today.remind { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
+.mood-remind {
+  display: flex; gap: 8px; align-items: flex-start; margin: -2px 0 10px; padding: 9px 11px; border-radius: 10px;
+  font-size: 13px; line-height: 1.35; background: color-mix(in srgb, var(--accent) 12%, var(--bg-2)); color: var(--text);
+}
+.mood-remind i { color: var(--accent); margin-top: 2px; }
+.mood-partner { min-width: 0; }
+.mood-partner-label { min-width: 0; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mood-dots { display: inline-flex; flex: none; }
+.mood-dots .mood-dot { margin-left: -4px; box-shadow: 0 0 0 2px var(--surface); }
+.mood-dots .mood-dot:first-child { margin-left: 0; }
+.mood-chip.more { color: var(--text-dim); border-style: dashed; }
+.chip.as-btn { font: inherit; font-size: 12px; padding: 6px 10px; cursor: pointer; }
 .mood-bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; gap: 2px; }
 .legend-row { margin-bottom: 10px; padding: 12px; }
 .legend-row .who { display: inline-flex; gap: 6px; align-items: center; font-weight: 700; }

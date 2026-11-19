@@ -12,6 +12,7 @@ import { dayKey } from './lib/util';
 import { projectsOf, allTags, tsMs } from './lib/util';
 import { Avatar } from './components/Avatar';
 import { TasksView } from './components/TasksView';
+import { MoodReminder } from './components/Mood';
 import { TaskModal } from './components/TaskModal';
 import { Inbox, unreadCount } from './components/Inbox';
 import { murmurAwaitingMe } from './lib/murmurUtil';
@@ -325,6 +326,7 @@ export default function App() {
       </nav>
 
       <Toasts />
+      <MoodReminder me={me} partner={users.find((u) => u.uid !== me.uid)} moods={moods} legends={moodLegends} />
 
       {showInbox && (
         <Inbox notifs={notifs} userOf={userOf} viewedFrom={viewedFrom}
