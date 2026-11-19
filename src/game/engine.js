@@ -267,8 +267,8 @@ export function makePack(seed, giant) {
 /* ---------------- Награды ----------------
    Монеты недели считаются из того, что сделано в приложении:
    · задача — 1 монета, с подзадачами — монета за каждую подзадачу;
-     важная или срочная — ещё +2 (простая важная = 3); закрыта днём
-     раньше срока — ещё +1;
+     важная или срочная — ещё +2 (простая важная = 3); закрыта в срок
+     (не позже дня срока) — ещё +1;
    · настроение — 1 за каждый отмеченный день, +1 если отмечена вся неделя,
      +2 за день, когда отметились оба;
    · Мурмур — фильм или досмотренный сериал 1, пройденная игра 10
@@ -276,7 +276,7 @@ export function makePack(seed, giant) {
      (за неделю округляется вниз, отметка серий общая);
    · бюджет — 1 за каждый день, когда что-то внесено, +1 за разобранный чек. */
 
-export const REWARD = { item: 1, hot: 2, early: 1, moodDay: 1, moodWeek: 1, moodPair: 2, media: 1, game: 10, episode: 0.5, review: 1, budgetDay: 1, receipt: 1 };
+export const REWARD = { item: 1, hot: 2, onTime: 1, moodDay: 1, moodWeek: 1, moodPair: 2, media: 1, game: 10, episode: 0.5, review: 1, budgetDay: 1, receipt: 1 };
 
 function msOf(ts) {
   if (!ts) return 0;
@@ -289,30 +289,49 @@ export function taskReward(t) {
   const imp = t.priorityMatrix?.importance ?? 0;
   const urg = t.priorityMatrix?.urgency ?? 0;
   const items = (t.checklist || []).length;
-  return Math.max(1, items) * REWARD.item + (imp > 0 || urg > 0 ? REWARD.hot : 0) + (isEarly(t) ? REWARD.early : 0);
+  return Math.max(1, items) * REWARD.item + (imp > 0 || urg > 0 ? REWARD.hot : 0) + (isOnTime(t) ? REWARD.onTime : 0);
 }
 
-// Раньше срока — закрыта в более ранний день, чем срок. Срок по умолчанию —
-// конец дня создания, так что «закрыл сегодня» бонуса не даёт.
-export function isEarly(t) {
+// В срок — закрыта не позже дня срока. Без срока опоздать нельзя — тоже в срок.
+export function isOnTime(t) {
   const done = msOf(t.completedAt);
   const due = msOf(t.deadline);
-  return !!done && !!due && dayStr(new Date(done)) < dayStr(new Date(due));
+  if (!done) return false;
+  return !due || dayStr(new Date(done)) <= dayStr(new Date(due));
+}
+
+// Награда за задачу по прежним правилам (до ноября 2026) — только для переноса
+// баланса старых ранов, см. carryFor.
+export function legacyTaskReward(t) {
+  const imp = t.priorityMatrix?.importance ?? 0;
+  const urg = t.priorityMatrix?.urgency ?? 0;
+  return Math.max(2, (t.checklist || []).length) + (imp > 0 ? Math.ceil(imp / 2) : 0) + (urg > 0 ? 1 : 0);
+}
+
+// Закрытые этим человеком задачи недели. Монеты тому, кто закрыл
+// (старые задачи без completedBy — исполнителю).
+function closedBy(tasks, uid, since) {
+  return tasks.filter((t) => (t.completedBy || t.assigneeUid) === uid
+    && (t.status === 'done' || t.status === 'approved')
+    && msOf(t.completedAt) >= since);
+}
+
+// Ран начат при старых правилах: задачи тогда стоили дороже, и часть монет
+// уже потрачена. Чтобы баланс не ушёл в минус (и новые монеты не гасили
+// невидимый долг), разницу один раз переносим в run.carry.
+export const RULES_V = 2;
+export function carryFor(tasks, uid, from, rewards) {
+  const old = closedBy(tasks, uid, from.getTime()).reduce((n, t) => n + legacyTaskReward(t), 0);
+  return Math.max(0, old - rewards.coins);
 }
 
 export function rewardsFor({ tasks = [], moods = [], media = [], tx = [] }, uid, from) {
   const since = from.getTime();
   const fromKey = dayStr(from);
 
-  const list = [];
-  tasks.forEach((t) => {
-    // Монеты тому, кто закрыл (старые задачи без completedBy — исполнителю).
-    if ((t.completedBy || t.assigneeUid) !== uid) return;
-    if (t.status !== 'done' && t.status !== 'approved') return;
-    const at = msOf(t.completedAt);
-    if (!at || at < since) return;
-    list.push({ id: t.id, title: t.title, at, coins: taskReward(t), items: (t.checklist || []).length, early: isEarly(t) });
-  });
+  const list = closedBy(tasks, uid, since).map((t) => ({
+    id: t.id, title: t.title, at: msOf(t.completedAt), coins: taskReward(t), items: (t.checklist || []).length, onTime: isOnTime(t),
+  }));
   list.sort((a, b) => b.at - a.at);
   const taskCoins = list.reduce((n, x) => n + x.coins, 0);
 
@@ -355,6 +374,7 @@ const newUid = () => `${Date.now().toString(36)}${(uidCounter++).toString(36)}${
 export function newRun(week, today = week, uid = '') {
   return {
     v: 3,
+    rulesV: RULES_V,
     week,
     pack: makePack(`${uid}|${week}|pack0`, giantOf(week)),
     packRolls: 0,
@@ -391,8 +411,7 @@ export function economy(run, rewards) {
   const xp = (run.xpBought || 0) + (run.xpDaily || 0);
   const level = levelOf(xp);
   return {
-    // Не ниже нуля: при смене правил наград посреди недели баланс не уходит в минус.
-    coins: Math.max(0, START_COINS + rewards.coins + (run.interest || 0) - (run.spent || 0)),
+    coins: START_COINS + rewards.coins + (run.interest || 0) + (run.carry || 0) - (run.spent || 0),
     xp, level, slots: teamSize(level), next: nextLevelXp(xp),
   };
 }

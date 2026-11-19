@@ -7,7 +7,7 @@ import { Avatar } from './Avatar';
 import {
   SPECIES, BY_ID, GIANTS, ELEMENTS, CLASSES, FAMILIES, REGIONS, SKILLS, RARITY, PLACE,
   FRONT_SIZE, BACK_SIZE, BENCH_SIZE, REROLL_COST, XP_BUY, GIANT_HP, LEVEL_XP, DAILY_XP, MAX_STARS, MISPLACED,
-  newRun, normalizeRun, START_COINS, makePack, repack, isFresh, economy, rewardsFor, ensureShop, buy, sell, move, reroll, buyXp,
+  newRun, normalizeRun, START_COINS, RULES_V, carryFor, makePack, repack, isFresh, economy, rewardsFor, ensureShop, buy, sell, move, reroll, buyXp,
   teamOf, bonds, tick, interestFor, simulateRaid, giantOf, weekKey, weekStart, dayStr, dayIndex,
   unitCost, offerCost, oddsFor, battleHp, statsOf, imgOf, formOf, placeOf, fits, isWeekend, ENGINE_V,
   fightCost, fightsOn, giantPower,
@@ -387,6 +387,14 @@ export function GameView({ tasks, me, users }) {
     if (current && stored.v !== 3) saveGame(me.uid, upgradeRun(stored, me.uid)).catch(reportError);
   }, [current, stored?.v]);
 
+  // Ран начат при старых правилах наград — один раз переносим разницу,
+  // чтобы потраченное по старым ценам не съедало новые монеты.
+  useEffect(() => {
+    if (!current || !sourcesReady || !tasks.length || stored.rulesV === RULES_V) return;
+    const carry = carryFor(tasks, me.uid, weekStart(), rewards);
+    saveGame(me.uid, { ...upgradeRun(stored, me.uid), rulesV: RULES_V, carry }).catch(reportError);
+  }, [current, sourcesReady, tasks.length, stored?.rulesV]);
+
   // Новый день — проценты с накоплений и опыт.
   useEffect(() => {
     if (!run || !current || !sourcesReady || (run.lastTick || today) >= today) return;
@@ -691,12 +699,13 @@ export function GameView({ tasks, me, users }) {
             <div className="stat"><div className="n">{run.interest || 0}</div><div className="l">проценты</div></div>
             <div className="stat"><div className="n">{run.spent || 0}</div><div className="l">потрачено</div></div>
           </div>
+          {run.carry > 0 && <div className="pm-income"><span><i className="fa-solid fa-scale-balanced" /> Перенос со старых правил</span><b><i className="fa-solid fa-coins" /> {run.carry}</b></div>}
           <div className="pm-income"><span><i className="fa-solid fa-list-check" /> Задачи <span className="dim">· {rewards.list.length}</span></span><b><i className="fa-solid fa-coins" /> {rewards.tasks}</b></div>
           <div className="pm-income"><span><i className="fa-solid fa-face-smile" /> Настроение <span className="dim">· {rewards.mood.days} из 7 дней{rewards.mood.pairDays ? `, вместе ${rewards.mood.pairDays}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.mood.coins}</b></div>
           <div className="pm-income"><span><i className="fa-solid fa-film" /> Мурмур <span className="dim">· {rewards.media.list.length}{rewards.media.episodes ? `, серий ${rewards.media.episodes}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.media.coins}</b></div>
           <div className="pm-income"><span><i className="fa-solid fa-wallet" /> Бюджет <span className="dim">· {rewards.budget.days} дн.{rewards.budget.receipts ? `, чеков ${rewards.budget.receipts}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.budget.coins}</b></div>
           <p className="hint">
-            Задача — 1 монета, с подзадачами — монета за каждую подзадачу; важная или срочная — ещё +2; закрыта днём раньше срока — ещё +1.
+            Задача — 1 монета, с подзадачами — монета за каждую подзадачу; важная или срочная — ещё +2; закрыта в срок — ещё +1.
             Настроение — 1 за каждый отмеченный день, +1, если отмечена вся неделя, и +2 за день, когда отметились оба.
             Мурмур: фильм или досмотренный сериал — 1, пройденная игра — 10, серия — ½ (за неделю вниз), свой отзыв — ещё +1.
             День, когда что-то внесено в бюджет, — 1; разобранный чек — ещё +1.
@@ -706,7 +715,7 @@ export function GameView({ tasks, me, users }) {
           {rewards.list.length === 0 && <div className="empty">На этой неделе задач пока не закрыто.</div>}
           {rewards.list.map((r) => (
             <div key={r.id} className="pm-income">
-              <span>{r.title}{r.items ? <span className="dim"> · {r.items} подзадач</span> : null}{r.early ? <span className="dim"> · раньше срока</span> : null}</span>
+              <span>{r.title}{r.items ? <span className="dim"> · {r.items} подзадач</span> : null}{r.onTime ? <span className="dim"> · в срок</span> : null}</span>
               <b><i className="fa-solid fa-coins" /> {r.coins}</b>
             </div>
           ))}
