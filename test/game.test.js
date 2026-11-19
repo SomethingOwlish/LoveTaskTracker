@@ -163,9 +163,9 @@ describe('связи', () => {
     expect(b.find((x) => x.kind === 'el' && x.key === 'fire').tier).toBe(3);
     expect(new Set(b.map((x) => x.kind))).toEqual(new Set(['el', 'cl', 'fam', 'reg']));
   });
-  it('бонус размера команды с семи', () => {
-    expect(sizeBonus(6)).toBeNull();
-    expect(sizeBonus(7).name).toBe('Отряд');
+  it('бонус размера команды с девяти', () => {
+    expect(sizeBonus(8)).toBeNull();
+    expect(sizeBonus(9).name).toBe('Стая');
     expect(sizeBonus(11).name).toBe('Великая стая');
   });
 });

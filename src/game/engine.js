@@ -99,7 +99,6 @@ export const REGIONS = {
 
 // Размер команды: большие команды получают свои бонусы.
 export const SIZE_BONUS = [
-  { n: 7, name: 'Отряд', atk: 0.05, shield: 0, wrath: 0, text: 'команда бьёт на 5% сильнее' },
   { n: 9, name: 'Стая', atk: 0.1, shield: 8, wrath: 0, text: '+10% урона и щит 8 строю' },
   { n: 11, name: 'Великая стая', atk: 0.15, shield: 15, wrath: 2, text: '+15% урона, щит 15 и гнев копится медленнее' },
 ];
