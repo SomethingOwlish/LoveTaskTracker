@@ -1073,3 +1073,19 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 .pm-dex-item.unknown .pm-portrait { font-size: 22px; color: var(--text-dim); }
 .pm-income { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
 .pm-income b { color: var(--warn); white-space: nowrap; font-weight: 600; }
+
+/* Мурмур: серии сериалов */
+.series-progress { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.series-bar { flex: 1; height: 6px; border-radius: 999px; background: var(--bg-2); overflow: hidden; max-width: 180px; }
+.series-bar.big { max-width: none; height: 8px; }
+.series-bar > span { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width .2s; }
+.series-label { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+.eps-summary { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 14px; color: var(--text-dim); }
+.eps-season { margin-bottom: 14px; }
+.eps-season-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.eps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 6px; }
+.eps-btn { min-height: 40px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-2); color: var(--text); font-family: var(--font-mono); font-size: 14px; }
+.eps-btn.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.eps-btn.next { border-color: var(--accent); border-style: dashed; }
+.eps-btn:disabled { opacity: .35; }
+.eps-season-head .spacer { flex: 1; }

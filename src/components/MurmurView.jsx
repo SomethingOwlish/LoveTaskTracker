@@ -1,12 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { reportError } from '../lib/toast';
-import { searchMedia, mediaFields } from '../lib/media';
+import { searchMedia, mediaFields, fetchSeasons, isTmdbTv } from '../lib/media';
+import {
+  hasSeasons, seriesProgress, progressLabel, watchedIn, toggleEpisode, toggleSeason, watchedUpTo, fmtEp,
+} from '../lib/seasons';
 import { Avatar } from './Avatar';
 import { Sheet, Seg, loadPref, savePref } from './Sheet';
 import { tsMs, fmtDate, toDate } from '../lib/util';
 import {
   addMurmur, updateMurmur, subscribeMurmurDone, deleteMurmur, toggleMurmurWant, rateMurmur, unwatchMurmur,
+  setMurmurSeasonWatched, setMurmurWatched,
 } from '../lib/db';
+
+// Подтянуть сезоны сериала из TMDB и сохранить в запись
+async function pullSeasons(id, extId) {
+  const data = await fetchSeasons(extId);
+  if (data.seasons.length) await updateMurmur(id, data);
+  return data;
+}
 
 export const MURMUR_KINDS = {
   movie: { label: 'Фильмы', one: 'фильм', icon: 'fa-solid fa-film', done: 'Посмотрели', doneVerb: 'Посмотрели' },
@@ -24,6 +35,7 @@ export function MurmurView({ items: liveItems, me, users, userOf }) {
   const [rate, setRate] = useState(null);
   const [edit, setEdit] = useState(null);
   const [pick, setPick] = useState(null);
+  const [epsId, setEpsId] = useState(null); // открытая сетка серий (id — чтобы видеть живые отметки)
   const partner = users.find((u) => u.uid !== me.uid);
   const K = MURMUR_KINDS[kind];
 
@@ -86,7 +98,9 @@ export function MurmurView({ items: liveItems, me, users, userOf }) {
     return () => { alive = false; clearTimeout(t); };
   }, [text, kind]);
   const addFound = (m) => {
-    addMurmur({ kind, title: m.title, uid: me.uid, media: mediaFields(m) }).catch((e) => reportError(e));
+    addMurmur({ kind, title: m.title, uid: me.uid, media: mediaFields(m) })
+      .then((ref) => { if (ref && kind === 'series' && isTmdbTv(m.id)) return pullSeasons(ref.id, m.id).catch(() => {}); }) // не вышло — подтянем из карточки
+      .catch((e) => reportError(e));
     setText(''); setFound(null);
     if (filter === 'done') setFilter('want');
   };
@@ -133,11 +147,15 @@ export function MurmurView({ items: liveItems, me, users, userOf }) {
 
       {list.map((x) => (
         <MurmurCard key={x.id} item={x} me={me} partner={partner} userOf={userOf} K={K}
-          onRate={() => setRate(x)} onEdit={() => setEdit(x)} />
+          onRate={() => setRate(x)} onEdit={() => setEdit(x)} onEpisodes={() => setEpsId(x.id)} />
       ))}
 
       {rate && <RateSheet item={rate} me={me} K={K} onClose={() => setRate(null)} />}
       {edit && <EditSheet item={edit} onClose={() => setEdit(null)} />}
+      {epsId && items.find((x) => x.id === epsId) && (
+        <EpisodesSheet item={items.find((x) => x.id === epsId)} K={K} onClose={() => setEpsId(null)}
+          onRate={() => { setRate(items.find((x) => x.id === epsId)); setEpsId(null); }} />
+      )}
       {pick && (
         <Sheet title="Выпало" onClose={() => setPick(null)}
           footer={<><button className="btn" onClick={random}><i className="fa-solid fa-dice" /> Ещё раз</button><button className="btn btn-accent" onClick={() => setPick(null)}>Берём!</button></>}>
@@ -153,7 +171,9 @@ function Score({ value }) {
   return <span className="score">{value}</span>;
 }
 
-function MurmurCard({ item, me, partner, userOf, K, onRate, onEdit }) {
+function MurmurCard({ item, me, partner, userOf, K, onRate, onEdit, onEpisodes }) {
+  const isSeries = item.kind === 'series';
+  const prog = isSeries ? seriesProgress(item) : null;
   const done = item.status === 'done';
   const wanted = item.wantedBy || [];
   const iWant = wanted.includes(me.uid);
@@ -174,6 +194,7 @@ function MurmurCard({ item, me, partner, userOf, K, onRate, onEdit }) {
           </div>
           {item.overview && <p className="desc murmur-overview">{item.overview}</p>}
           {item.note && <p className="desc">{item.note}</p>}
+          {prog && <SeriesProgress prog={prog} />}
         </div>
       </div>
 
@@ -184,6 +205,7 @@ function MurmurCard({ item, me, partner, userOf, K, onRate, onEdit }) {
             <span className="hint" style={{ margin: 0 }}>{wanted.length > 1 ? 'хотят оба' : 'хочет'}</span>
           </span>
           <span className="spacer" />
+          {isSeries && <EpisodesButton onClick={onEpisodes} />}
           <button className={`btn btn-sm ${iWant ? '' : 'btn-ghost'}`} onClick={(e) => { e.stopPropagation(); toggleMurmurWant(item, me.uid); }}>
             {iWant ? <><i className="fa-solid fa-heart" /> Хочу</> : <><i className="fa-regular fa-heart" /> Я тоже</>}
           </button>
@@ -197,6 +219,7 @@ function MurmurCard({ item, me, partner, userOf, K, onRate, onEdit }) {
           {partner && <span className="who"><Avatar email={partner.email} avatar={partner.avatar} /> <Score value={theirScore} /></span>}
           {doneAt && <span className="hint" style={{ margin: 0 }}>{fmtDate(doneAt)}</span>}
           <span className="spacer" />
+          {isSeries && <EpisodesButton onClick={onEpisodes} />}
           {myScore == null
             ? <button className="btn btn-sm btn-accent" onClick={(e) => { e.stopPropagation(); onRate(); }}>Оценить</button>
             : <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); onRate(); }}>Изменить</button>}
@@ -268,6 +291,7 @@ function EditSheet({ item, onClose }) {
   };
   const pick = (m) => {
     updateMurmur(item.id, mediaFields({ ...m, title: item.title })).catch((e) => reportError(e));
+    if (item.kind === 'series' && isTmdbTv(m.id) && m.id !== item.extId) pullSeasons(item.id, m.id).catch(() => {});
     onClose();
   };
   const [title, setTitle] = useState(item.title);
@@ -298,6 +322,127 @@ function EditSheet({ item, onClose }) {
         <button className="btn btn-ghost" style={{ color: 'var(--bad)' }}
           onClick={() => { if (confirm('Удалить из списка?')) { deleteMurmur(item.id); onClose(); } }}>Удалить</button>
       </div>
+    </Sheet>
+  );
+}
+
+// Полоска прогресса сериала на карточке: «S2E5 · 37%»
+function SeriesProgress({ prog }) {
+  const label = progressLabel(prog);
+  return (
+    <div className="series-progress" title={`Посмотрели ${prog.seen} из ${prog.total}`}>
+      <div className="series-bar"><span style={{ width: `${prog.pct}%` }} /></div>
+      <span className="series-label">{label || `${prog.total} серий`}</span>
+    </div>
+  );
+}
+
+function EpisodesButton({ onClick }) {
+  return (
+    <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); onClick(); }}>
+      <i className="fa-solid fa-list-ol" /> Серии
+    </button>
+  );
+}
+
+// Сетка сезонов → серий. Отметки общие на двоих; оценка и отзыв — на весь сериал.
+function EpisodesSheet({ item, K, onClose, onRate }) {
+  const prog = seriesProgress(item);
+  const [upTo, setUpTo] = useState(false); // режим «отметить всё до этой серии»
+  const [busy, setBusy] = useState(false);
+  const [found, setFound] = useState(null);
+  const [err, setErr] = useState(null);
+  const canPull = isTmdbTv(item.extId);
+
+  const pull = (extId = item.extId) => {
+    setBusy(true); setErr(null);
+    pullSeasons(item.id, extId)
+      .then((d) => { if (!d.seasons.length) setErr('В базе нет сезонов для этого сериала.'); })
+      .catch((e) => setErr(e.message))
+      .finally(() => setBusy(false));
+  };
+  // у старой записи нет id в TMDB — сначала найдём сериал по названию
+  const search = () => {
+    setFound('loading');
+    searchMedia('series', item.title).then(setFound).catch(setFound);
+  };
+  const pickFound = (m) => {
+    setFound(null);
+    updateMurmur(item.id, mediaFields({ ...m, title: item.title, link: m.link || item.link })).catch((e) => reportError(e));
+    pull(m.id);
+  };
+
+  const tap = (n, e) => {
+    const p = upTo ? setMurmurWatched(item, watchedUpTo(item, n, e)) : setMurmurSeasonWatched(item, n, toggleEpisode(watchedIn(item, n), e));
+    p.catch((x) => reportError(x));
+  };
+  const markNext = () => {
+    const { s, e } = prog.next;
+    setMurmurSeasonWatched(item, s, toggleEpisode(watchedIn(item, s), e)).catch((x) => reportError(x));
+  };
+
+  const footer = prog?.complete && item.status !== 'done'
+    ? <><button className="btn" onClick={onClose}>Закрыть</button><button className="btn btn-accent" onClick={onRate}><i className="fa-solid fa-star" /> Оценить</button></>
+    : prog?.next
+      ? <><button className="btn" onClick={onClose}>Закрыть</button><button className="btn btn-accent" onClick={markNext}><i className="fa-solid fa-check" /> {fmtEp(prog.next.s, prog.next.e)}</button></>
+      : null;
+
+  return (
+    <Sheet title={item.title} onClose={onClose} footer={footer}>
+      {!hasSeasons(item) ? (
+        <div>
+          <p className="hint">У этой записи ещё нет сезонов и серий.</p>
+          {canPull
+            ? <button className="btn btn-accent" disabled={busy} onClick={() => pull()}><i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-download'}`} /> Подтянуть сезоны</button>
+            : <button className="btn btn-accent" onClick={search}><i className="fa-solid fa-magnifying-glass" /> Подтянуть сезоны</button>}
+          {found && <div style={{ marginTop: 12 }}><MediaResults found={found} onPick={pickFound} hint="Какой это сериал?" /></div>}
+          {err && <p className="hint">{err}</p>}
+        </div>
+      ) : (
+        <>
+          <div className="eps-summary">
+            <div className="series-bar big"><span style={{ width: `${prog.pct}%` }} /></div>
+            <span>Посмотрели {prog.seen} из {prog.total} · {prog.pct}%{item.tvStatus === 'ongoing' ? ' · сериал выходит' : ''}</span>
+          </div>
+          <div className="filters" style={{ marginBottom: 6 }}>
+            <button type="button" className={`pill ${upTo ? '' : 'on'}`} onClick={() => setUpTo(false)}>По одной</button>
+            <button type="button" className={`pill ${upTo ? 'on' : ''}`} onClick={() => setUpTo(true)}>Всё до серии</button>
+          </div>
+          {item.seasons.map((s) => {
+            const w = new Set(watchedIn(item, s.n));
+            const aired = Number.isInteger(s.aired) ? s.aired : s.eps;
+            const seen = [...w].filter((e) => e <= aired).length;
+            return (
+              <div key={s.n} className="eps-season">
+                <div className="eps-season-head">
+                  <b>Сезон {s.n}</b>
+                  <span className="hint" style={{ margin: 0 }}>{seen}/{aired}{aired < s.eps ? ` · выйдет ещё ${s.eps - aired}` : ''}</span>
+                  <span className="spacer" />
+                  {aired > 0 && (
+                    <button type="button" className="btn btn-sm btn-ghost"
+                      onClick={() => setMurmurSeasonWatched(item, s.n, toggleSeason(item, s.n)).catch((x) => reportError(x))}>
+                      {seen >= aired ? 'Снять' : 'Весь сезон'}
+                    </button>
+                  )}
+                </div>
+                <div className="eps-grid">
+                  {Array.from({ length: s.eps }, (_, i) => i + 1).map((e) => (
+                    <button key={e} type="button" disabled={e > aired}
+                      className={`eps-btn ${w.has(e) ? 'on' : ''} ${prog.next?.s === s.n && prog.next?.e === e ? 'next' : ''}`}
+                      title={fmtEp(s.n, e)} onClick={() => tap(s.n, e)}>{e}</button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {canPull && (
+            <button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={() => pull()} style={{ marginTop: 6 }}>
+              <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-rotate'}`} /> Обновить сезоны
+            </button>
+          )}
+          {err && <p className="hint">{err}</p>}
+        </>
+      )}
     </Sheet>
   );
 }

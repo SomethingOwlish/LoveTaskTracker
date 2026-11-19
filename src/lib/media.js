@@ -2,9 +2,9 @@
 // TMDB и RAWG. Ключи — только в секретах воркера.
 import { auth } from '../firebase';
 
-export async function searchMedia(kind, q) {
+async function api(params) {
   const token = await auth.currentUser?.getIdToken();
-  const r = await fetch(`/api/media?kind=${encodeURIComponent(kind)}&q=${encodeURIComponent(q)}`, {
+  const r = await fetch(`/api/media?${new URLSearchParams(params)}`, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
   const j = await r.json().catch(() => ({}));
@@ -14,7 +14,18 @@ export async function searchMedia(kind, q) {
     throw e;
   }
   if (!r.ok) throw new Error(j.error || `Поиск не ответил (${r.status})`);
-  return j.results || [];
+  return j;
+}
+
+export async function searchMedia(kind, q) {
+  return (await api({ kind, q })).results || [];
+}
+
+// Сезоны сериала из TMDB по extId вида «tmdb:tv:95396» → { seasons, tvStatus }
+export const isTmdbTv = (extId) => /^tmdb:tv:\d+$/.test(String(extId || ''));
+export async function fetchSeasons(extId) {
+  const j = await api({ seasons: extId });
+  return { seasons: j.seasons || [], tvStatus: j.tvStatus || null };
 }
 
 // Поля, которые сохраняем в запись Мурмура из найденного
