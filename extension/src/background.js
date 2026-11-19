@@ -1,9 +1,11 @@
 // Фоновый скрипт: вход, запись задач, меню по правому клику, системные уведомления.
 import {
   getStatus, signIn, signOut, createTask, undoTask, findMurmur, addMurmur, wantMurmur, undoMurmur,
+  findWish, addWish, undoWish, getUi,
 } from './backend.js';
 import { taskFromText, isUsefulUrl, cleanPageTitle } from './shared.js';
 import { collectPageSignals, detectMedia, MURMUR_SITE_PATTERNS } from './media.js';
+import { detectProduct } from './shop.js';
 import { APP_URL } from '../config.js';
 
 const ICON = 'icons/128.png';
@@ -38,6 +40,7 @@ async function buildMenus() {
     add({ id: `page:${who}`, title: `Задача ${label} из этой страницы`, contexts: ['page'] });
   }
   add({ id: 'murmur', title: 'В Мурмур', contexts: ['page'], documentUrlPatterns: MURMUR_SITE_PATTERNS });
+  add({ id: 'wish', title: 'В вишлист', contexts: ['page', 'link'] });
 }
 
 chrome.runtime.onInstalled.addListener(rebuildMenus);
@@ -70,6 +73,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 
   if (info.menuItemId === 'murmur') return murmurFromPage(tab);
+  if (info.menuItemId === 'wish') return wishFromPage(tab, info);
 
   const [source, who] = String(info.menuItemId).split(':');
   let data;
@@ -131,6 +135,38 @@ async function murmurFromPage(tab) {
   }
 }
 
+/* ---------------- Вишлист из правого клика ----------------
+   По странице товара — с ценой и картинкой; по ссылке или обычной странице —
+   просто название и адрес (цену можно дописать в приложении). */
+async function wishFromPage(tab, info) {
+  try {
+    let data;
+    if (info.linkUrl) {
+      const text = info.selectionText || await linkText(tab, info.frameId, info.linkUrl);
+      data = { title: (text || info.linkUrl).trim(), url: info.linkUrl };
+    } else {
+      const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectPageSignals });
+      const p = r?.result ? detectProduct(r.result) : null;
+      data = p
+        ? { title: p.title, url: p.link, price: p.price, currency: p.currency, image: p.image || null, source: p.source, type: p.type }
+        : { title: cleanPageTitle(tab?.title) || info.pageUrl, url: isUsefulUrl(info.pageUrl) ? info.pageUrl : null };
+    }
+    const ex = data.url ? await findWish(data.url) : null;
+    if (ex) return notify(ex.status === 'got' ? 'Уже добыто' : 'Уже в вишлисте', ex.title);
+    const res = await addWish(data);
+    const price = data.price ? ` · ${data.price} ${data.currency || ''}`.trimEnd() : '';
+    chrome.notifications.create(`w|${res.id}`, {
+      type: 'basic', iconUrl: ICON,
+      title: 'В вишлисте',
+      message: res.title + price,
+      buttons: [{ title: 'Открыть' }, { title: 'Отменить' }],
+    });
+  } catch (e) {
+    if (e.code === 'NOT_SIGNED_IN') rebuildMenus();
+    notify('Не добавилось в вишлист', e.message);
+  }
+}
+
 /* ---------------- Уведомления ---------------- */
 function notify(title, message) {
   chrome.notifications.create({ type: 'basic', iconUrl: ICON, title, message: message || '' });
@@ -140,18 +176,20 @@ chrome.notifications.onClicked.addListener((id) => {
   const [kind, taskId] = id.split('|');
   if (kind === 't') openApp(taskId);
   if (kind === 'm') openApp(null, 'murmur');
+  if (kind === 'w') openApp(null, 'wishlist');
   chrome.notifications.clear(id);
 });
 
 chrome.notifications.onButtonClicked.addListener(async (id, button) => {
   const [kind, taskId, notifId] = id.split('|');
-  if (kind !== 't' && kind !== 'm') return;
+  if (!['t', 'm', 'w'].includes(kind)) return;
   chrome.notifications.clear(id);
-  if (button === 0) return kind === 'm' ? openApp(null, 'murmur') : openApp(taskId);
+  if (button === 0) return kind === 'm' ? openApp(null, 'murmur') : kind === 'w' ? openApp(null, 'wishlist') : openApp(taskId);
   try {
     if (kind === 'm') await undoMurmur(taskId);
+    else if (kind === 'w') await undoWish(taskId);
     else await undoTask(taskId, notifId);
-    notify('Отменено', kind === 'm' ? 'Убрали из Мурмура.' : 'Задача удалена.');
+    notify('Отменено', { m: 'Убрали из Мурмура.', w: 'Убрали из вишлиста.' }[kind] || 'Задача удалена.');
   } catch (e) {
     notify('Не получилось отменить', e.message);
   }
@@ -175,6 +213,10 @@ const handlers = {
   addMurmur: ({ data }) => addMurmur(data),
   wantMurmur: ({ id }) => wantMurmur(id),
   undoMurmur: ({ id }) => undoMurmur(id),
+  findWish: ({ url }) => findWish(url),
+  addWish: ({ data }) => addWish(data),
+  undoWish: ({ id }) => undoWish(id),
+  ui: () => getUi(),
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {

@@ -19,3 +19,29 @@ export function buildMurmurDoc({ kind, title, note = '', link = '', uid, poster 
     createdAt: serverTimestamp(), doneAt: null, doneBy: null,
   };
 }
+
+// «Повторить»: новая карточка «Заново …» из уже просмотренной/пройденной.
+// Старая запись с оценками и отзывами остаётся в архиве как есть.
+// Сезоны сериала берём, отметки серий — нет: смотрим с начала.
+const AGAIN_KEEP = ['kind', 'title', 'note', 'link', 'poster', 'year', 'source', 'overview', 'extRating', 'extId', 'seasons', 'tvStatus'];
+export function againDoc(item, uid, { serverTimestamp }) {
+  const copy = {};
+  AGAIN_KEEP.forEach((k) => { if (item[k] !== undefined) copy[k] = item[k]; });
+  return {
+    ...copy,
+    again: true, againOf: item.id || null,
+    addedBy: uid, wantedBy: [uid],
+    status: 'want', ratings: {}, reviews: {},
+    createdAt: serverTimestamp(), doneAt: null, doneBy: null,
+  };
+}
+
+// Заголовок карточки: «Заново» перед названием у повтора.
+export const murmurTitle = (item) => (item.again ? `Заново: ${item.title}` : item.title);
+
+// Порядок «Хотим»: начатые игры, затем то, что хотят оба, затем новые.
+export function wantOrder(a, b, ms) {
+  return (b.startedAt ? 1 : 0) - (a.startedAt ? 1 : 0)
+    || (b.wantedBy?.length || 0) - (a.wantedBy?.length || 0)
+    || ms(b.createdAt) - ms(a.createdAt);
+}

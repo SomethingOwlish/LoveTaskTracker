@@ -6,11 +6,12 @@ import {
 } from 'firebase/auth/web-extension';
 import {
   getFirestore, collection, addDoc, deleteDoc, doc, serverTimestamp, Timestamp,
-  query, where, limit, getDocs, updateDoc, arrayUnion,
+  query, where, limit, getDocs, getDoc, updateDoc, arrayUnion,
 } from 'firebase/firestore/lite';
 import { FIREBASE_PROJECT } from '../../src/firebaseConfig.js';
 import { buildTaskDoc, assignedNotification } from '../../src/lib/taskDoc.js';
 import { buildMurmurDoc } from '../../src/lib/murmurUtil.js';
+import { buildWish } from '../../src/lib/wishMath.js';
 import { OAUTH_CLIENT_ID, REDIRECT_URI } from '../config.js';
 import { person, partnerOf } from './shared.js';
 
@@ -128,4 +129,37 @@ export async function wantMurmur(id) {
 export async function undoMurmur(id) {
   await requireMe();
   await deleteDoc(doc(db, 'murmur', id));
+}
+
+/* ---------------- Вишлист ---------------- */
+// Уже в вишлисте? Ищем по ссылке (одно чтение).
+export async function findWish(url) {
+  await requireMe();
+  if (!url) return null;
+  const snap = await getDocs(query(collection(db, 'wishlist'), where('url', '==', url), limit(1)));
+  if (snap.empty) return null;
+  const x = snap.docs[0].data();
+  return { id: snap.docs[0].id, title: x.title, status: x.status, ownerUid: x.ownerUid };
+}
+
+export async function addWish(data) {
+  const me = await requireMe();
+  const w = buildWish({ ownerUid: me.uid, ...data });
+  if (!w) throw new Error('Пустое название.');
+  const ref = await addDoc(collection(db, 'wishlist'), { ...w, status: 'want', authorUid: me.uid, createdAt: serverTimestamp() });
+  return { id: ref.id, title: w.title };
+}
+
+export async function undoWish(id) {
+  await requireMe();
+  await deleteDoc(doc(db, 'wishlist', id));
+}
+
+/* ---------------- Тема ---------------- */
+// Тема и акцент, выбранные в приложении (userState/{email}.ui).
+export async function getUi() {
+  const me = await getMe();
+  if (!me) return null;
+  const snap = await getDoc(doc(db, 'userState', me.uid));
+  return snap.exists() ? snap.data().ui || null : null;
 }

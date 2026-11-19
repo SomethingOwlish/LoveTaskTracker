@@ -1,4 +1,5 @@
-/* Те же две темы, что в приложении (src/theme.css), в урезанном виде. */
+/* Те же четыре темы, что в приложении (src/theme.css), в урезанном виде.
+   Тема и акцент приходят из приложения (popup.js → applyUi). */
 :root,
 [data-theme='academia'] {
   --bg: #2c2420;
@@ -9,6 +10,8 @@
   --text-dim: #b6a591;
   --accent: #d99873;
   --accent-ink: #2a1f18;
+  --ink-dark: #2a1f18;
+  --ink-light: #fff6ee;
   --warn: #d8a657;
   --bad: #c46a5a;
   --good: #8aa46a;
@@ -27,6 +30,8 @@
   --text-dim: #7d90a8;
   --accent: #00f2ff;
   --accent-ink: #03121a;
+  --ink-dark: #03121a;
+  --ink-light: #ffffff;
   --warn: #ffc24d;
   --bad: #ff5c8a;
   --good: #39ff8a;
@@ -35,6 +40,46 @@
   --radius: 9px;
   --radius-sm: 6px;
   --glow: 0 0 14px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+[data-theme='rowan'] {
+  --bg: #0b2224;
+  --surface: #12302f;
+  --surface-2: #1b3e40;
+  --border: rgba(147, 212, 216, 0.16);
+  --text: #dff1f2;
+  --text-dim: #8fb5b8;
+  --accent: #d0342c;
+  --accent-ink: #fff2ef;
+  --ink-dark: #0b2224;
+  --ink-light: #fff2ef;
+  --warn: #e3a857;
+  --bad: #e0584f;
+  --good: #7fc6a4;
+  --font-display: 'Montserrat', system-ui, sans-serif;
+  --font-body: 'Montserrat', system-ui, sans-serif;
+  --radius: 10px;
+  --radius-sm: 7px;
+  --glow: none;
+}
+[data-theme='dusk'] {
+  --bg: #262423;
+  --surface: #33283a;
+  --surface-2: #402b47;
+  --border: rgba(201, 224, 235, 0.14);
+  --text: #e6f0f5;
+  --text-dim: #9fb2c8;
+  --accent: #8350c4;
+  --accent-ink: #f6f0ff;
+  --ink-dark: #241a2a;
+  --ink-light: #f6f0ff;
+  --warn: #e0b86a;
+  --bad: #e07a92;
+  --good: #8fc9a8;
+  --font-display: 'DM Serif Display', Georgia, serif;
+  --font-body: 'Nunito Sans', system-ui, sans-serif;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --glow: 0 0 16px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 * { box-sizing: border-box; }
@@ -170,3 +215,13 @@ kbd { font: 11px ui-monospace, monospace; opacity: 0.65; }
 .small { font-size: 12px; }
 .dupe { font-size: 13px; margin: 8px 0 0; padding: 6px 9px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--text); }
 #m-save { width: 100%; margin-top: 12px; }
+
+/* ---------- вишлист ---------- */
+.poster.wish { width: 72px; height: 72px; object-fit: contain; background: #fff; }
+.poster.wish.empty { background: var(--surface); }
+.price-row { display: flex; gap: 6px; align-items: center; }
+.price-row .input { width: 92px; flex: none; padding: 5px 8px; }
+.price-row .chips { flex-wrap: nowrap; }
+.price-row .chip { padding: 2px 7px; font-size: 12px; }
+#w-type .chip { font-size: 12px; }
+#w-save { width: 100%; margin-top: 12px; }

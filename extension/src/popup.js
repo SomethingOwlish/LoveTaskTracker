@@ -2,6 +2,8 @@
 // Всё общение с Firebase — через фоновый скрипт (background.js).
 import { DEADLINES, QUADRANTS, taskFromText, splitTags, isUsefulUrl, cleanPageTitle } from './shared.js';
 import { collectPageSignals, detectMedia } from './media.js';
+import { detectProduct } from './shop.js';
+import { WISH_TYPES } from '../../src/lib/wishMath.js';
 import { OAUTH_CLIENT_ID, REDIRECT_URI } from '../config.js';
 
 const $app = document.getElementById('app');
@@ -17,8 +19,8 @@ async function call(type, extra = {}) {
 
 const prefs = {
   async get() {
-    const d = await chrome.storage.local.get(['who', 'theme', 'recentProjects']);
-    return { who: d.who || 'me', theme: d.theme || 'academia', recentProjects: d.recentProjects || [] };
+    const d = await chrome.storage.local.get(['who', 'ui', 'recentProjects']);
+    return { who: d.who || 'me', ui: d.ui || null, recentProjects: d.recentProjects || [] };
   },
   set: (obj) => chrome.storage.local.set(obj),
 };
@@ -36,10 +38,12 @@ async function readTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   let selection = '';
   let media = null;
+  let product = null;
   if (tab?.id && isUsefulUrl(tab.url)) {
     try {
       const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectPageSignals });
       media = r?.result ? detectMedia(r.result) : null;
+      product = r?.result ? detectProduct(r.result) : null;
     } catch { /* нет доступа к странице */ }
     try {
       const [r] = await chrome.scripting.executeScript({
@@ -55,7 +59,7 @@ async function readTab() {
       selection = r?.result || '';
     } catch { /* страницы Chrome и магазина расширений читать нельзя */ }
   }
-  return { url: tab?.url || '', title: tab?.title || '', selection, media };
+  return { url: tab?.url || '', title: tab?.title || '', selection, media, product };
 }
 
 /* ---------- экран входа ---------- */
@@ -334,25 +338,118 @@ function renderMurmurForm($panel, { me, partner }, media) {
   });
 }
 
+/* ---------- Вишлист ---------- */
+const CURS = ['RSD', 'EUR', 'USD', 'RUB'];
+const CUR_SYM = { RSD: 'дин.', EUR: '€', USD: '$', RUB: '₽' };
+
+// product — распознанный товар; на обычной странице — заголовок и адрес вкладки.
+function renderWishForm($panel, { me, partner }, tab) {
+  const p = tab.product || { title: cleanPageTitle(tab.title), link: isUsefulUrl(tab.url) ? tab.url : '', price: null, currency: null, image: '', source: '', type: 'need' };
+  const s = { type: p.type || 'need', owner: me.uid, currency: p.currency || 'RSD', existing: null };
+  const curs = CURS.includes(s.currency) ? CURS : [...CURS, s.currency];
+  $panel.innerHTML = `
+    <form id="w" autocomplete="off">
+      <div class="media">
+        ${p.image ? `<img class="poster wish" src="${esc(p.image)}" alt="" referrerpolicy="no-referrer" />` : '<div class="poster wish empty">🎁</div>'}
+        <div class="media-body">
+          <textarea id="w-title" class="input title" rows="2" placeholder="Что хочется?">${esc(p.title)}</textarea>
+          <div class="price-row">
+            <input id="w-price" class="input" inputmode="decimal" placeholder="Цена" value="${p.price ?? ''}" />
+            <div class="chips" id="w-cur">${curs.map((c) => `<button type="button" class="chip ${c === s.currency ? 'on' : ''}" data-cur="${c}">${esc(CUR_SYM[c] || c)}</button>`).join('')}</div>
+          </div>
+          <div class="dim small">${esc(p.source || '')}</div>
+        </div>
+      </div>
+      <div class="field">
+        <div class="chips" id="w-type">${WISH_TYPES.map((t) => `<button type="button" class="chip ${t.id === s.type ? 'on' : ''}" data-type="${t.id}">${esc(t.label)}</button>`).join('')}</div>
+      </div>
+      <div class="field">
+        <div class="seg" id="w-owner">
+          <button type="button" class="seg-btn on" data-owner="${esc(me.uid)}">${ava(me)} Мне</button>
+          ${partner ? `<button type="button" class="seg-btn" data-owner="${esc(partner.uid)}">${ava(partner)} ${esc(partner.dative)}</button>` : ''}
+        </div>
+      </div>
+      <input id="w-note" class="input" style="margin-top:10px" placeholder="Заметка — размер, цвет…" />
+      <p class="dupe" id="w-dupe" hidden></p>
+      <button type="submit" class="btn btn-primary" id="w-save">＋ В вишлист <kbd>↵</kbd></button>
+      <p class="error" id="w-err" hidden></p>
+    </form>`;
+
+  const $ = (id) => document.getElementById(id);
+  const title = $('w-title');
+  autoGrow(title);
+  title.addEventListener('input', () => autoGrow(title));
+  const pick = (box, attr, set) => box.addEventListener('click', (e) => {
+    const b = e.target.closest(`[data-${attr}]`);
+    if (!b) return;
+    set(b.dataset[attr]);
+    box.querySelectorAll(`[data-${attr}]`).forEach((x) => x.classList.toggle('on', x === b));
+  });
+  pick($('w-cur'), 'cur', (v) => { s.currency = v; });
+  pick($('w-type'), 'type', (v) => { s.type = v; });
+  pick($('w-owner'), 'owner', (v) => { s.owner = v; });
+
+  if (p.link) {
+    call('findWish', { url: p.link }).then((ex) => {
+      if (!ex) return;
+      const d = $('w-dupe');
+      d.hidden = false;
+      d.textContent = ex.status === 'got' ? `«${ex.title}» уже добыто.` : `«${ex.title}» уже в вишлисте.`;
+      $('w-save').textContent = 'Всё равно добавить';
+    }).catch(() => {});
+  }
+
+  $('w').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && e.target.tagName !== 'BUTTON') { e.preventDefault(); $('w').requestSubmit(); }
+  });
+  $('w').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = $('w-err');
+    err.hidden = true;
+    const t = title.value.trim();
+    if (!t) { title.focus(); return; }
+    const raw = $('w-price').value.replace(/[\s\u00a0]/g, '').replace(',', '.');
+    const price = raw ? Number(raw) : null;
+    const btn = $('w-save');
+    btn.disabled = true;
+    btn.textContent = 'Сохраняю…';
+    try {
+      const res = await call('addWish', {
+        data: { title: t, url: p.link || null, price: Number.isFinite(price) ? price : null, currency: s.currency, type: s.type, ownerUid: s.owner, note: $('w-note').value.trim(), image: p.image || null, source: p.source || null },
+      });
+      const whose = partner && s.owner === partner.uid ? ` — для: ${partner.name}` : '';
+      renderDone({ heading: `В вишлисте${whose}`, title: res.title, openTab: 'wishlist', undo: () => call('undoWish', { id: res.id }) });
+    } catch (ex) {
+      if (ex.code === 'NOT_SIGNED_IN') return renderSignIn(ex.message);
+      err.textContent = 'Не сохранилось: ' + ex.message;
+      err.hidden = false;
+      btn.disabled = false;
+      btn.innerHTML = '＋ В вишлист <kbd>↵</kbd>';
+    }
+  });
+}
+
 /* ---------- общий каркас: шапка, вкладки, подвал ---------- */
 function renderMain(status, tab, saved) {
   const { me } = status;
-  const media = tab.media;
-  // на странице фильма/игры по умолчанию — Мурмур, но если что-то выделено — задача
-  let current = media && !tab.selection.trim() ? 'murmur' : 'task';
+  const { media, product } = tab;
+  // по умолчанию: фильм/игра — Мурмур, товар — вишлист; если что-то выделено — задача
+  const picked = !tab.selection.trim();
+  let current = picked && media ? 'murmur' : picked && product ? 'wish' : 'task';
+  const TABS = [...(media ? [['murmur', '🎬 Мурмур']] : []), ['wish', '🎁 Вишлист'], ['task', '✓ Задача']];
+  const HEAD = { murmur: 'В Мурмур', wish: 'В вишлист', task: 'Новая задача' };
+  const FOCUS = { murmur: 'm-title', wish: 'w-title', task: 'title' };
   $app.innerHTML = `
     <header class="head">
       ${ava(me)}
       <h1 id="heading"></h1>
-      <button type="button" class="icon-btn" id="theme" title="Сменить тему" aria-label="Сменить тему">◐</button>
       <button type="button" class="icon-btn" id="open" title="Открыть трекер" aria-label="Открыть трекер">↗</button>
     </header>
-    ${media ? `
-    <div class="tabs" role="tablist">
-      <button type="button" role="tab" data-tab="murmur">🎬 Мурмур</button>
-      <button type="button" role="tab" data-tab="task">✓ Задача</button>
-    </div>` : ''}
+    <div class="tabs" role="tablist" style="grid-template-columns: repeat(${TABS.length}, 1fr)">
+      ${TABS.map(([k, l]) => `<button type="button" role="tab" data-tab="${k}">${l}</button>`).join('')}
+    </div>
     <section id="p-murmur" hidden></section>
+    <section id="p-wish" hidden></section>
     <section id="p-task" hidden></section>
     <footer class="foot">
       <span class="dim">${esc(me.name)}</span>
@@ -362,21 +459,20 @@ function renderMain(status, tab, saved) {
   const $ = (id) => document.getElementById(id);
   renderTaskForm($('p-task'), status, tab, saved);
   if (media) renderMurmurForm($('p-murmur'), status, media);
+  renderWishForm($('p-wish'), status, tab);
 
   const show = (name) => {
     current = name;
-    $('p-task').hidden = name !== 'task';
-    $('p-murmur').hidden = name !== 'murmur';
-    $('heading').textContent = name === 'murmur' ? 'В Мурмур' : 'Новая задача';
+    ['task', 'murmur', 'wish'].forEach((k) => { $(`p-${k}`).hidden = name !== k; });
+    $('heading').textContent = HEAD[name];
     $app.querySelectorAll('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
-    const input = $(name === 'murmur' ? 'm-title' : 'title');
+    const input = $(FOCUS[name]);
     autoGrow(input); // в скрытой панели высоту не посчитать — считаем при показе
     input.focus();
     input.select();
   };
   $app.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
-  $('open').addEventListener('click', () => { call('openApp', { tab: current === 'murmur' ? 'murmur' : undefined }); window.close(); });
-  $('theme').addEventListener('click', toggleTheme);
+  $('open').addEventListener('click', () => { call('openApp', { tab: { murmur: 'murmur', wish: 'wishlist' }[current] }); window.close(); });
   $('signout').addEventListener('click', async () => { await call('signOut'); renderSignIn(); });
   show(current);
 }
@@ -412,21 +508,44 @@ function renderDone({ heading, title, taskId, openTab, undo }) {
   }
 }
 
-/* ---------- тема ---------- */
-async function toggleTheme() {
-  const next = document.documentElement.dataset.theme === 'cyberpunk' ? 'academia' : 'cyberpunk';
-  document.documentElement.dataset.theme = next;
-  prefs.set({ theme: next });
+/* ---------- тема ----------
+   Та же тема и акцент, что выбраны в приложении (userState.ui). Последнюю
+   известную держим в chrome.storage, чтобы окно не мигало при открытии. */
+const THEMES = ['academia', 'cyberpunk', 'rowan', 'dusk'];
+function isLight(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  const [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255];
+  return 0.299 * r + 0.587 * g + 0.114 * b > 150;
+}
+function applyUi(ui) {
+  const root = document.documentElement;
+  root.dataset.theme = THEMES.includes(ui?.theme) ? ui.theme : 'academia';
+  if (ui?.accent) {
+    root.style.setProperty('--accent', ui.accent);
+    root.style.setProperty('--accent-ink', isLight(ui.accent) ? 'var(--ink-dark)' : 'var(--ink-light)');
+  } else {
+    root.style.removeProperty('--accent');
+    root.style.removeProperty('--accent-ink');
+  }
+}
+async function syncUi(cached) {
+  try {
+    const ui = await call('ui');
+    if (ui && JSON.stringify(ui) !== JSON.stringify(cached)) { applyUi(ui); prefs.set({ ui }); }
+  } catch { /* нет сети — остаёмся на кэше */ }
 }
 
 /* ---------- старт ---------- */
 async function start({ blank = false } = {}) {
   const saved = await prefs.get();
-  document.documentElement.dataset.theme = saved.theme;
+  applyUi(saved.ui);
   try {
     const [status, tab] = await Promise.all([call('status'), readTab()]);
     if (!status.me) return renderSignIn();
-    renderMain(status, blank ? { ...tab, title: '', selection: '', media: null } : tab, saved);
+    syncUi(saved.ui);
+    renderMain(status, blank ? { ...tab, title: '', selection: '', media: null, product: null } : tab, saved);
   } catch (e) {
     renderSignIn(e.message);
   }

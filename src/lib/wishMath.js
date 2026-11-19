@@ -42,6 +42,8 @@ export function buildWish(data) {
     type: WISH_TYPE[data.type] ? data.type : 'need',
     ownerUid: data.ownerUid,
     note: String(data.note || '').trim().slice(0, 2000),
+    image: /^https:\/\//.test(data.image || '') ? String(data.image).slice(0, 2000) : null,
+    source: data.source ? String(data.source).slice(0, 100) : null,
   };
 }
 

@@ -93,11 +93,16 @@ function WishCard({ w, me, archived, onOpen }) {
   return (
     <div className={`task wish-card ${archived ? 'got' : ''}`} style={{ borderLeftColor: t.color }} onClick={onOpen} role="button" tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }}>
-      <div className="task-top">
-        <h3>{w.title}</h3>
-        {w.price ? <span className="money">{fmtCur(w.price, w.currency)}</span> : null}
+      <div className="wish-head">
+        {w.image && <img className="wish-img" src={w.image} alt="" loading="lazy" referrerPolicy="no-referrer" />}
+        <div className="wish-body">
+          <div className="task-top">
+            <h3>{w.title}</h3>
+            {w.price ? <span className="money">{fmtCur(w.price, w.currency)}</span> : null}
+          </div>
+          {w.note && <p className="desc">{w.note}</p>}
+        </div>
       </div>
-      {w.note && <p className="desc">{w.note}</p>}
       <div className="wish-foot">
         <Avatar email={w.ownerUid} />
         <span className="chip" style={{ borderColor: t.color, color: t.color }}><i className={t.icon} /> {t.label}</span>
@@ -128,7 +133,7 @@ function WishSheet({ me, base, wish, defaults, onClose }) {
   const save = () => {
     if (!title.trim()) return;
     const p = parseMoney(price);
-    saveWish(wish?.id, { title, url, price: Number.isFinite(p) ? p : null, currency, type, ownerUid, note }, me.uid).catch(reportError);
+    saveWish(wish?.id, { title, url, price: Number.isFinite(p) ? p : null, currency, type, ownerUid, note, image: wish?.image, source: wish?.source }, me.uid).catch(reportError);
     onClose();
   };
   const remove = () => {

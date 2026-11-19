@@ -109,7 +109,7 @@ describe('уровень и проценты', () => {
   });
   it('новый день: проценты с накоплений и опыт за каждый прошедший день', () => {
     const run = newRun('2026-11-16', '2026-11-16');
-    const rich = { coins: 40 };
+    const rich = { coins: 43 } // 5 стартовых + 43 = 48 → +4, затем 52 → +5;
     const next = tick(run, rich, '2026-11-18');
     expect(next.interest).toBe(4 + 5);
     expect(next.xpDaily).toBe(4);
@@ -297,5 +297,11 @@ describe('смена недели', () => {
     expect(economy(run, NONE).coins).toBe(START_COINS);
     expect(run.spent).toBe(0);
     expect(run.interest).toBe(0);
+  });
+  it('старт — 5 монет; ран, начатый до смены, остаётся с 8', () => {
+    expect(START_COINS).toBe(5);
+    expect(economy(newRun('2026-11-23'), NONE).coins).toBe(5);
+    const { startCoins, ...old } = newRun('2026-11-16');
+    expect(economy(old, NONE).coins).toBe(8);
   });
 });
