@@ -641,6 +641,8 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 }
 .mood-chip.on { background: var(--mc); color: #1a1a1a; border-color: transparent; font-weight: 700; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--mc); }
 .mood-chip.on .mood-dot { background: #1a1a1a55; }
+/* сетка календаря настроений: 7 колонок, дни недели + 42 дня одним гридом */
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
 .mood-cell { overflow: hidden; }
 .mood-cell span { background: color-mix(in srgb, var(--surface) 70%, transparent); border-radius: 6px; padding: 0 4px; align-self: flex-start; }
 .mood-cell:disabled { opacity: 0.35; }
