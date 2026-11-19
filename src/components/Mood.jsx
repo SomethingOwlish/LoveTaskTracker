@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Sheet, Seg } from './Sheet';
 import { DOW, monthTitle, isSameDay, dayKey, fromDayKey, fmtDate, fmtWeekday, uid6 } from '../lib/util';
 import { saveMoodLegend, setMood, clearMood, setMoodNote, subscribeMoods, subscribeDoneOnDay, subscribeMyMood } from '../lib/db';
 import { toast } from '../lib/toast';
 import {
-  DEFAULT_MOOD_LEGEND, MAX_MOODS_PER_DAY, legendOf, resolveMood, moodIndex, moodItems, moodIds,
-  toggleMoodItem, moodCellStyle, monthCounts, missingDefaults, shouldRemind,
+  DEFAULT_MOOD_LEGEND, legendOf, resolveMood, moodIndex, moodItems, moodIds,
+  toggleMoodItem, moveShareBoundary, moodShares, moodCellStyle, monthCounts, missingDefaults, shouldRemind,
 } from '../lib/mood';
 
 export { DEFAULT_MOOD_LEGEND, legendOf, resolveMood, moodIndex };
@@ -37,12 +37,77 @@ function MoodPicker({ legend, mine, onChange, collapse = 0 }) {
           <button type="button" className="mood-chip more" onClick={() => setAll(true)}>ещё {hidden.length}…</button>
         )}
       </div>
-      {ids.length > 0 && (
-        <p className="hint" style={{ marginBottom: 0 }}>
-          {ids.length >= MAX_MOODS_PER_DAY ? `Максимум ${MAX_MOODS_PER_DAY} цвета — следующий заменит самый первый.` : 'Можно выбрать несколько цветов.'}
-        </p>
+      {ids.length === 1 && <p className="hint" style={{ marginBottom: 0 }}>Можно выбрать несколько цветов.</p>}
+      {ids.length > 1 && (
+        <>
+          <ShareBar items={moodItems(mine)} onChange={onChange} />
+          <p className="hint" style={{ marginBottom: 0 }}>Двигай границы, чтобы задать, сколько было каждого цвета.</p>
+        </>
       )}
     </>
+  );
+}
+
+/* ---------- Доли цветов дня ---------- */
+// Полоса как в календаре; границы между цветами перетаскиваются
+// (или двигаются стрелками с клавиатуры).
+function ShareBar({ items, onChange }) {
+  const ref = useRef(null);
+  const [draft, setDraft] = useState(null);
+  useEffect(() => setDraft(null), [items]);
+  const cur = draft || items;
+  const pcts = moodShares(cur);
+  const cum = pcts.map((_, i) => pcts.slice(0, i + 1).reduce((a, x) => a + x, 0));
+
+  const drag = (i) => (e) => {
+    e.preventDefault();
+    const rect = ref.current.getBoundingClientRect();
+    let latest = cur;
+    const move = (ev) => {
+      latest = moveShareBoundary(latest, i, ((ev.clientX - rect.left) / rect.width) * 100);
+      setDraft(latest);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      if (latest !== cur) onChange(latest); else setDraft(null);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  };
+  const key = (i) => (e) => {
+    const step = e.key === 'ArrowLeft' ? -5 : e.key === 'ArrowRight' ? 5 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = moveShareBoundary(cur, i, cum[i] + step);
+    if (next !== cur) { setDraft(next); onChange(next); }
+  };
+
+  return (
+    <div className="share-bar" ref={ref}>
+      {cur.map((x, i) => (
+        <span key={x.itemId} className="share-seg" style={{ flexGrow: pcts[i], background: x.color }} title={`${x.label}: ${pcts[i]}%`}>
+          {pcts[i] >= 12 ? `${pcts[i]}%` : ''}
+        </span>
+      ))}
+      {cum.slice(0, -1).map((at, i) => (
+        <span
+          key={i}
+          className="share-handle"
+          style={{ left: `${at}%` }}
+          role="slider"
+          tabIndex={0}
+          aria-label={`Граница: ${cur[i].label} / ${cur[i + 1].label}`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={at}
+          onPointerDown={drag(i)}
+          onKeyDown={key(i)}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -59,6 +124,11 @@ export function MoodTodayWidget({ me, partner, moods, legends }) {
   const legend = legendOf(legends, me.uid);
   const [sheet, setSheet] = useState(false);
   const marked = moodItems(mine).length > 0;
+  // Пока человек отмечает день, виджет остаётся (можно добавить цвета и
+  // доли); уже отмеченный день в списке дел не висит — поменять отметку
+  // можно в календаре настроений.
+  const [editing, setEditing] = useState(false);
+  if (marked && !editing) return null;
 
   return (
     <div className={`card mood-today ${marked ? '' : 'remind'}`}>
@@ -78,11 +148,15 @@ export function MoodTodayWidget({ me, partner, moods, legends }) {
           <i className="fa-solid fa-palette" /> Сегодня ещё без отметки. Каким был день? Выбери один или несколько цветов.
         </div>
       )}
-      <MoodPicker legend={legend} mine={mine} collapse={8} onChange={(items) => setMood(me.uid, today, items, mine?.note)} />
+      <MoodPicker legend={legend} mine={mine} collapse={8}
+        onChange={(items) => { setEditing(true); setMood(me.uid, today, items, mine?.note); }} />
       {marked && (
-        <button type="button" className="link-btn" onClick={() => setSheet(true)}>
-          {mine.note ? `«${mine.note}»` : '+ заметка о дне'}
-        </button>
+        <div className="row" style={{ alignItems: 'center', marginTop: 8 }}>
+          <button type="button" className="link-btn" onClick={() => setSheet(true)}>
+            {mine.note ? `«${mine.note}»` : '+ заметка о дне'}
+          </button>
+          <button type="button" className="btn btn-sm btn-accent" style={{ flex: 'none' }} onClick={() => setEditing(false)}>Готово</button>
+        </div>
       )}
       {sheet && <MoodDaySheet day={today} me={me} partner={partner} idx={idx} legends={legends} onClose={() => setSheet(false)} />}
     </div>
@@ -200,7 +274,7 @@ export function MoodCalendar({ me, partner, legends }) {
           );
         })}
       </div>
-      {whose === 'both' && <p className="hint">Верхняя половина дня — {me.name}, нижняя — {partner?.name}. Несколько цветов за день — полосками.</p>}
+      {whose === 'both' && <p className="hint">Левая половина дня — {me.name}, правая — {partner?.name}. Ширина полосы — доля цвета за день.</p>}
 
       {monthStats.length > 0 && (
         <>
@@ -292,7 +366,7 @@ function MoodDaySheet({ day, me, partner, idx, legends, onClose }) {
           {theirs ? (
             <div className="card">
               <div className="chips">
-                {theirs.items.map((x) => <span key={x.id} className="chip"><span className="mood-dot" style={{ background: x.color }} />{x.label}</span>)}
+                {theirs.items.map((x) => <span key={x.id} className="chip"><span className="mood-dot" style={{ background: x.color }} />{x.label}{theirs.items.length > 1 ? ` · ${x.pct}%` : ''}</span>)}
               </div>
               {theirs.note && <p style={{ margin: '8px 0 0' }}>«{theirs.note}»</p>}
             </div>
