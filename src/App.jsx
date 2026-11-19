@@ -21,6 +21,7 @@ import { murmurAwaitingMe } from './lib/murmurUtil';
 const ProfileView = lazy(() => import('./components/ProfileView').then((m) => ({ default: m.ProfileView })));
 const MurmurView = lazy(() => import('./components/MurmurView').then((m) => ({ default: m.MurmurView })));
 const GameView = lazy(() => import('./components/GameView').then((m) => ({ default: m.GameView })));
+const GachaView = lazy(() => import('./components/GachaView').then((m) => ({ default: m.GachaView })));
 const BudgetView = lazy(() => import('./components/BudgetView').then((m) => ({ default: m.BudgetView })));
 import { loadPref, savePref } from './components/Sheet';
 
@@ -38,6 +39,7 @@ const TABS = [
   ['murmur', 'fa-solid fa-film', 'Мурмур'],
   ['budget', 'fa-solid fa-wallet', 'Бюджет'],
   ['game', 'fa-solid fa-paw', 'Игра'],
+  ['gacha', 'fa-solid fa-star', 'Гача'],
   ['profile', 'fa-regular fa-user', 'Профиль'],
 ];
 
@@ -130,6 +132,7 @@ export default function App() {
       import('./components/MurmurView');
       import('./components/BudgetView');
       import('./components/GameView');
+      import('./components/GachaView');
     });
   }, [user]);
 
@@ -313,6 +316,7 @@ export default function App() {
         {tab === 'murmur' && <MurmurView items={murmur} me={me} users={users} userOf={userOf} />}
         {tab === 'budget' && <BudgetView me={me} userOf={userOf} />}
         {tab === 'game' && <GameView tasks={tasks} me={me} users={users} />}
+        {tab === 'gacha' && <GachaView me={me} users={users} />}
         {tab === 'profile' && (
           <ProfileView
             tasks={tasks} me={me} users={users}
