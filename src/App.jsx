@@ -41,9 +41,11 @@ const TABS = [
   ['murmur', 'fa-solid fa-film', 'Мурмур'],
   ['budget', 'fa-solid fa-wallet', 'Бюджет'],
   ['game', 'fa-solid fa-paw', 'Игра'],
-  ['gacha', 'fa-solid fa-star', 'Гача'],
   ['profile', 'fa-regular fa-user', 'Профиль'],
 ];
+// Разделы без кнопки в нижней панели — открываются из профиля.
+const SUB_TABS = { gacha: 'profile' };
+const isTab = (k) => TABS.some(([t]) => t === k) || k in SUB_TABS;
 
 const DEFAULT_ACCENT = { academia: '#d99873', cyberpunk: '#00f2ff', rowan: '#d0342c', dusk: '#8350c4' };
 const THEMES = Object.keys(DEFAULT_ACCENT);
@@ -62,9 +64,9 @@ function isLight(hex) {
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined = грузится, null = нет
   const [tab, setTabState] = useState(() => {
-    if (TABS.some(([k]) => k === START_TAB)) return START_TAB;
+    if (isTab(START_TAB)) return START_TAB;
     const saved = loadPref('tab', 'tasks');
-    return TABS.some(([k]) => k === saved) ? saved : 'tasks'; // «calendar» из старой версии
+    return isTab(saved) ? saved : 'tasks'; // «calendar» из старой версии
   });
   const setTab = (t) => { setTabState(t); savePref('tab', t); window.scrollTo(0, 0); };
   const [tasks, setTasks] = useState([]);
@@ -335,13 +337,19 @@ export default function App() {
         {tab === 'murmur' && <MurmurView items={murmur} me={me} users={users} userOf={userOf} />}
         {tab === 'budget' && <BudgetView me={me} userOf={userOf} />}
         {tab === 'game' && <GameView tasks={tasks} me={me} users={users} />}
-        {tab === 'gacha' && <GachaView me={me} users={users} />}
+        {tab === 'gacha' && (
+          <>
+            <button type="button" className="btn btn-sm btn-ghost back-btn" onClick={() => setTab('profile')}><i className="fa-solid fa-arrow-left" /> Профиль</button>
+            <GachaView me={me} users={users} />
+          </>
+        )}
         {tab === 'profile' && (
           <ProfileView
             tasks={tasks} me={me} users={users}
             theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}
             projectColors={projectColors} setProjectColor={setProjectColor} pushPrefs={pushPrefs}
             calendarProjects={calendarProjects} setCalendarProjects={setCalendarProjects}
+            onOpenGacha={() => setTab('gacha')}
           />
         )}
         </Suspense>
@@ -350,7 +358,7 @@ export default function App() {
 
       <nav className="nav">
         {TABS.map(([k, icon, label]) => (
-          <button key={k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)} aria-current={tab === k ? 'page' : undefined}>
+          <button key={k} className={(SUB_TABS[tab] || tab) === k ? 'active' : ''} onClick={() => setTab(k)} aria-current={(SUB_TABS[tab] || tab) === k ? 'page' : undefined}>
             <span className="ico"><i className={icon} />{k === 'murmur' && murmurBadge > 0 && <span className="nav-badge">{murmurBadge}</span>}</span>
             {label}
           </button>

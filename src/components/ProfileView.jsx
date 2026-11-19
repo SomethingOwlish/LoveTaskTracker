@@ -75,7 +75,7 @@ function statsFor(tasks, uid) {
   return { open, doneToday, doneWeek };
 }
 
-export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAccent, projectColors, setProjectColor, pushPrefs, calendarProjects = [], setCalendarProjects }) {
+export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAccent, projectColors, setProjectColor, pushPrefs, calendarProjects = [], setCalendarProjects, onOpenGacha }) {
   const [view, setView] = useState(me.uid); // чьи смотрим
   const who = users.find((u) => u.uid === view) || me;
   const s = statsFor(tasks, view);
@@ -114,6 +114,14 @@ export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAcce
             <GameTeamCard uid={who.uid} name={who.name} />
           </Suspense>
         </>
+      )}
+
+      {view === me.uid && onOpenGacha && (
+        <button type="button" className="card profile-link" onClick={onOpenGacha}>
+          <i className="fa-solid fa-star" />
+          <span><b>Гача</b><span className="dim">крутки, гаранты, план развития и отряды</span></span>
+          <i className="fa-solid fa-chevron-right dim" />
+        </button>
       )}
 
       {view === me.uid && (
