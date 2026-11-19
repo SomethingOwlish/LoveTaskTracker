@@ -7,7 +7,7 @@ import { Avatar } from './Avatar';
 import {
   SPECIES, BY_ID, GIANTS, ELEMENTS, CLASSES, FAMILIES, REGIONS, SKILLS, RARITY, PLACE,
   FRONT_SIZE, BACK_SIZE, BENCH_SIZE, REROLL_COST, XP_BUY, GIANT_HP, LEVEL_XP, DAILY_XP, MAX_STARS, MISPLACED,
-  newRun, normalizeRun, START_COINS, RULES_V, carryFor, makePack, repack, isFresh, economy, rewardsFor, ensureShop, buy, sell, move, reroll, buyXp,
+  newRun, normalizeRun, START_COINS, makePack, repack, isFresh, economy, rewardsFor, ensureShop, buy, sell, move, reroll, buyXp,
   teamOf, bonds, tick, interestFor, simulateRaid, giantOf, weekKey, weekStart, dayStr, dayIndex,
   unitCost, offerCost, oddsFor, battleHp, statsOf, imgOf, formOf, placeOf, fits, isWeekend, ENGINE_V,
   fightCost, fightsOn, giantPower,
@@ -387,14 +387,6 @@ export function GameView({ tasks, me, users }) {
     if (current && stored.v !== 3) saveGame(me.uid, upgradeRun(stored, me.uid)).catch(reportError);
   }, [current, stored?.v]);
 
-  // Ран начат при старых правилах наград — один раз переносим разницу,
-  // чтобы потраченное по старым ценам не съедало новые монеты.
-  useEffect(() => {
-    if (!current || !sourcesReady || !tasks.length || stored.rulesV === RULES_V) return;
-    const carry = carryFor(tasks, me.uid, weekStart(), rewards);
-    saveGame(me.uid, { ...upgradeRun(stored, me.uid), rulesV: RULES_V, carry }).catch(reportError);
-  }, [current, sourcesReady, tasks.length, stored?.rulesV]);
-
   // Новый день — проценты с накоплений и опыт.
   useEffect(() => {
     if (!run || !current || !sourcesReady || (run.lastTick || today) >= today) return;
@@ -699,7 +691,6 @@ export function GameView({ tasks, me, users }) {
             <div className="stat"><div className="n">{run.interest || 0}</div><div className="l">проценты</div></div>
             <div className="stat"><div className="n">{run.spent || 0}</div><div className="l">потрачено</div></div>
           </div>
-          {run.carry > 0 && <div className="pm-income"><span><i className="fa-solid fa-scale-balanced" /> Перенос со старых правил</span><b><i className="fa-solid fa-coins" /> {run.carry}</b></div>}
           <div className="pm-income"><span><i className="fa-solid fa-list-check" /> Задачи <span className="dim">· {rewards.list.length}</span></span><b><i className="fa-solid fa-coins" /> {rewards.tasks}</b></div>
           <div className="pm-income"><span><i className="fa-solid fa-face-smile" /> Настроение <span className="dim">· {rewards.mood.days} из 7 дней{rewards.mood.pairDays ? `, вместе ${rewards.mood.pairDays}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.mood.coins}</b></div>
           <div className="pm-income"><span><i className="fa-solid fa-film" /> Мурмур <span className="dim">· {rewards.media.list.length}{rewards.media.episodes ? `, серий ${rewards.media.episodes}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.media.coins}</b></div>
