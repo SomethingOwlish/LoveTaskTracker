@@ -97,12 +97,13 @@ function Bonds({ units, giant }) {
   if (!list.length) return <p className="hint">Связи появятся, когда в команде соберутся особи с общей стихией, классом, семейством или регионом.</p>;
   return (
     <div className="pm-bonds">
-      <div className={`pm-bond size ${size ? 'on' : ''}`}>
+      {/* размер команды — только когда бонус включён или до «Стаи» осталось две особи */}
+      {(size || units.length >= SIZE_BONUS[0].n - 2) && <div className={`pm-bond size ${size ? 'on' : ''}`}>
         <i className="fa-solid fa-people-group" />
         <b>{size ? size.name : 'Размер команды'}</b>
         <span className="pm-steps">{SIZE_BONUS.map((b) => <i key={b.n} className={units.length >= b.n ? 'on' : ''}>{b.n}</i>)}</span>
         <span className="pm-bond-text">{size ? size.text : ''}{nextSize ? `${size ? ' · ' : ''}с ${nextSize.n}: ${nextSize.text}` : ''}</span>
-      </div>
+      </div>}
       {on.map((x) => (
         <div key={x.kind + x.key} className="pm-bond on">
           <i className={`fa-solid ${x.def.icon}`} style={x.def.color ? { color: x.def.color } : undefined} />
