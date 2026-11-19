@@ -3,6 +3,8 @@
 // браузере их нет. Запрос пускаем только с действующим входом Firebase
 // одного из двух аккаунтов — чтобы чужие не тратили ваши лимиты.
 
+import { parseTmdbSeasons } from '../src/lib/seasons.js';
+
 const PROJECT = 'tasktrackergando';
 const ALLOWED = ['argentummortis@gmail.com', 'arentakasi@gmail.com'];
 const JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
@@ -63,6 +65,17 @@ async function tmdb(kind, q, env) {
   }));
 }
 
+// Сезоны сериала: /tv/{id} → [{ n, eps, aired }] (см. src/lib/seasons.js)
+async function tmdbSeasons(extId, env) {
+  const id = String(extId).match(/^tmdb:tv:(\d+)$/)?.[1];
+  if (!id) return null;
+  const u = new URL(`https://api.themoviedb.org/3/tv/${id}`);
+  u.searchParams.set('language', 'ru-RU');
+  const r = await fetch(u, { headers: { Authorization: `Bearer ${env.TMDB_TOKEN}`, accept: 'application/json' } });
+  if (!r.ok) throw new Error(`TMDB ${r.status}`);
+  return parseTmdbSeasons(await r.json());
+}
+
 async function rawg(q, env) {
   const u = new URL('https://api.rawg.io/api/games');
   u.searchParams.set('key', env.RAWG_KEY);
@@ -86,6 +99,12 @@ export async function handleMedia(request, env) {
   const token = (request.headers.get('authorization') || '').replace(/^Bearer /, '');
   if (!(await verifyFirebaseToken(token))) return json({ error: 'unauthorized' }, 401);
   const url = new URL(request.url);
+  const seasonsOf = url.searchParams.get('seasons');
+  if (seasonsOf) {
+    if (!env.TMDB_TOKEN) return json({ error: 'no_key', key: 'TMDB_TOKEN' }, 503);
+    const data = await tmdbSeasons(seasonsOf, env);
+    return data ? json(data) : json({ error: 'bad_id' }, 400);
+  }
   const kind = url.searchParams.get('kind');
   const q = (url.searchParams.get('q') || '').trim().slice(0, 100);
   if (!q) return json({ results: [] });

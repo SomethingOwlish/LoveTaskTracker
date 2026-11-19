@@ -365,6 +365,13 @@ export async function rateMurmur(item, uid, rating, review) {
   }
   return updateDoc(doc(db, 'murmur', item.id), patch);
 }
+// Серии сериала (см. lib/seasons.js). Отметка общая — смотрим вместе.
+export async function setMurmurSeasonWatched(item, n, list) {
+  return updateDoc(doc(db, 'murmur', item.id), { [`watched.s${n}`]: list, watchedAt: serverTimestamp() });
+}
+export async function setMurmurWatched(item, watched) {
+  return updateDoc(doc(db, 'murmur', item.id), { watched, watchedAt: serverTimestamp() });
+}
 export async function unwatchMurmur(item) {
   return updateDoc(doc(db, 'murmur', item.id), { status: 'want', doneAt: null, doneBy: null, ratings: {}, reviews: {} });
 }
