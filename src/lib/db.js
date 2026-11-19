@@ -7,6 +7,7 @@ import { nextFutureRecurrence } from './recurrence';
 import { tsMs } from './util';
 import { buildTaskDoc, assignedNotification } from './taskDoc';
 import { buildMurmurDoc } from './murmurUtil';
+import { cleanEventData } from './calendar';
 import { reportError } from './toast';
 
 // onSnapshot с понятной ошибкой вместо молча пустого экрана
@@ -78,7 +79,7 @@ export async function fetchTask(id) {
   return s.exists() ? { id: s.id, ...s.data() } : null;
 }
 
-// События календаря — только видимый диапазон дат.
+// Старые однодневные события — только видимый диапазон дат.
 export function subscribeEvents(from, to, cb) {
   const q = query(eventsCol, where('date', '>=', Timestamp.fromDate(from)), where('date', '<', Timestamp.fromDate(to)), orderBy('date', 'asc'));
   return listen(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
@@ -280,19 +281,32 @@ export async function clearNotifications(list) {
   await Promise.all((list || []).map((n) => deleteDoc(doc(db, 'notifications', n.id))));
 }
 
-/* ---------------- События календаря ---------------- */
-export async function createEvent(data) {
-  return addDoc(eventsCol, {
-    title: data.title?.trim() || 'Событие',
-    date: Timestamp.fromDate(new Date(data.date)),
-    allDay: data.allDay ?? true,
-    taskId: data.taskId || null,
-    authorUid: data.authorUid,
-    createdAt: serverTimestamp(),
-  });
-}
+/* ---------------- Старые однодневные события ----------------
+   Коллекция events (до многодневных calEvents): только показываем и удаляем.
+   Правка старого события переносит его в calEvents. */
 export async function deleteEvent(id) {
   return deleteDoc(doc(db, 'events', id));
+}
+
+/* ---------------- События календаря (многодневные) ----------------
+   calEvents/{id} = { title, description, start, end, participants, color, link,
+   authorUid } — start/end ключи дней YYYY-MM-DD. Читаем только те, что ещё
+   не закончились к началу видимой сетки: прошедшие месяцы не грузим. */
+const calEventsCol = collection(db, 'calEvents');
+export function subscribeCalEvents(fromKey, cb) {
+  const q = query(calEventsCol, where('end', '>=', fromKey));
+  return listen(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+}
+export async function createCalEvent(data) {
+  return addDoc(calEventsCol, {
+    ...cleanEventData(data), authorUid: data.authorUid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  });
+}
+export async function updateCalEvent(id, data) {
+  return updateDoc(doc(db, 'calEvents', id), { ...cleanEventData(data), updatedAt: serverTimestamp() });
+}
+export async function deleteCalEvent(id) {
+  return deleteDoc(doc(db, 'calEvents', id));
 }
 
 /* ---------------- Настроение ---------------- */
@@ -370,7 +384,7 @@ export async function unwatchMurmur(item) {
 }
 
 /* ---------------- Личное состояние ---------------- */
-// userState/{email} = { notifReadAt, projectColors }
+// userState/{email} = { notifReadAt, projectColors, calendarProjects, push, game }
 export function subscribeUserState(uid, cb) {
   return onSnapshot(doc(db, 'userState', uid), { includeMetadataChanges: true }, (s) => cb(s.data() || {}, !s.metadata.fromCache), (e) => reportError(e));
 }

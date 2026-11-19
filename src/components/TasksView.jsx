@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { reportError } from '../lib/toast';
 import { TaskCard } from './TaskCard';
 import { MatrixView } from './MatrixView';
@@ -8,8 +8,16 @@ import { MoodTodayWidget } from './Mood';
 import { isActive, isClosed, projectsOf, toDate, startOfToday, endOfToday, fmtDate, fmtWeekday } from '../lib/util';
 import { createTask, subscribeClosedTasks } from '../lib/db';
 
-export function TasksView({ tasks, me, users, userOf, onOpen, projectColors, moods, moodLegends, initialMode }) {
-  const [mode, setModeState] = useState(() => (['today', 'list', 'matrix'].includes(initialMode) ? initialMode : loadPref('tasksMode', 'today')));
+// Календарь тяжелее списков — грузим, только когда открыли вкладку.
+const CalendarView = lazy(() => import('./CalendarView').then((m) => ({ default: m.CalendarView })));
+const MODES = ['today', 'list', 'matrix', 'calendar'];
+
+export function TasksView({ tasks, me, users, userOf, onOpen, onNew, projectColors, moods, moodLegends, initialMode, calendarProjects }) {
+  const [mode, setModeState] = useState(() => {
+    if (MODES.includes(initialMode)) return initialMode;
+    const saved = loadPref('tasksMode', 'today');
+    return MODES.includes(saved) ? saved : 'today';
+  });
   const setMode = (m) => { setModeState(m); savePref('tasksMode', m); };
   const partner = users.find((u) => u.uid !== me.uid);
 
@@ -18,11 +26,11 @@ export function TasksView({ tasks, me, users, userOf, onOpen, projectColors, moo
       <Seg
         value={mode}
         onChange={setMode}
-        options={[['today', 'Сегодня'], ['list', 'Все задачи'], ['matrix', 'Матрица']]}
-        className="mb"
+        options={[['today', 'Сегодня'], ['list', 'Все'], ['matrix', 'Матрица'], ['calendar', 'Календарь']]}
+        className="mb tasks-seg"
       />
 
-      {mode !== 'matrix' && (
+      {(mode === 'today' || mode === 'list') && (
         <QuickAdd me={me} partner={partner} deadline={mode === 'today' ? endOfToday : null} />
       )}
 
@@ -35,6 +43,18 @@ export function TasksView({ tasks, me, users, userOf, onOpen, projectColors, moo
       )}
       {mode === 'matrix' && (
         <MatrixView tasks={tasks} me={me} users={users} onOpen={onOpen} projectColors={projectColors} />
+      )}
+      {mode === 'calendar' && (
+        <Suspense fallback={<div className="empty"><i className="fa-solid fa-spinner fa-spin" /></div>}>
+          <CalendarView tasks={tasks} me={me} users={users} moodLegends={moodLegends} onOpen={onOpen}
+            projectColors={projectColors} calendarProjects={calendarProjects} />
+        </Suspense>
+      )}
+
+      {/* В календаре своя кнопка «+ событие» у выбранного дня — вторая плавающая
+          кнопка там только мешала бы. */}
+      {mode !== 'calendar' && onNew && (
+        <button className="fab" onClick={onNew} aria-label="Новая задача (подробно)"><i className="fa-solid fa-plus" /></button>
       )}
     </div>
   );

@@ -74,7 +74,7 @@ function statsFor(tasks, uid) {
   return { open, doneToday, doneWeek };
 }
 
-export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAccent, projectColors, setProjectColor, pushPrefs }) {
+export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAccent, projectColors, setProjectColor, pushPrefs, calendarProjects = [], setCalendarProjects }) {
   const [view, setView] = useState(me.uid); // чьи смотрим
   const who = users.find((u) => u.uid === view) || me;
   const s = statsFor(tasks, view);
@@ -182,6 +182,26 @@ export function ProfileView({ tasks, me, users, theme, setTheme, accent, setAcce
               )}
             </div>
           ))}
+
+          <div className="section-title">Задачи в календаре</div>
+          <p className="hint" style={{ marginTop: -4 }}>В календаре — события. Задачи со сроком попадают туда только из отмеченных проектов (у каждого свой выбор).</p>
+          {myProjects.length === 0
+            ? <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>Проектов пока нет.</p>
+            : (
+              <div className="chips cal-projects">
+                {myProjects.map((p) => {
+                  const on = calendarProjects.includes(p);
+                  return (
+                    <button key={p} type="button" className={`pill ${on ? 'on' : ''}`} aria-pressed={on}
+                      onClick={() => setCalendarProjects?.(on ? calendarProjects.filter((x) => x !== p) : [...calendarProjects, p])}>
+                      <i className="dot" style={{ background: projectColors[p] || 'var(--text-dim)' }} />
+                      {p}
+                      {on && <i className="fa-solid fa-check" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
           <button className="btn btn-ghost btn-block" style={{ marginTop: 28, color: 'var(--text-dim)' }} onClick={() => signOut(auth)}>
             Выйти

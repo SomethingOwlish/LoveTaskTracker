@@ -36,8 +36,23 @@ service cloud.firestore {
       }
     }
 
+    // старые однодневные события (только чтение и удаление из приложения)
     match /events/{eventId} {
       allow read, write: if allowed();
+    }
+
+    // ---------- События календаря (могут длиться несколько дней) ----------
+    function validCalEvent(d) {
+      return shortText(d.title, 300) && d.title.size() > 0
+        && d.start is string && d.start.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+        && d.end is string && d.end.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+        && d.start <= d.end
+        && d.authorUid in emails()
+        && d.participants is list;
+    }
+    match /calEvents/{eventId} {
+      allow read, delete: if allowed();
+      allow create, update: if allowed() && validCalEvent(request.resource.data);
     }
 
     match /notifications/{notifId} {
