@@ -17,7 +17,6 @@ import { Inbox, unreadCount } from './components/Inbox';
 import { murmurAwaitingMe } from './lib/murmurUtil';
 
 // Редкие вкладки грузим по требованию — первый запуск на телефоне легче.
-const CalendarView = lazy(() => import('./components/CalendarView').then((m) => ({ default: m.CalendarView })));
 const ProfileView = lazy(() => import('./components/ProfileView').then((m) => ({ default: m.ProfileView })));
 const MurmurView = lazy(() => import('./components/MurmurView').then((m) => ({ default: m.MurmurView })));
 const GameView = lazy(() => import('./components/GameView').then((m) => ({ default: m.GameView })));
@@ -26,14 +25,15 @@ import { loadPref, savePref } from './components/Sheet';
 
 // Ярлык PWA / ссылка вида ?tab=tasks&view=today открывает нужный экран сразу.
 const params = new URLSearchParams(window.location.search);
-const START_TAB = params.get('tab');
-const START_VIEW = params.get('view');
+// Календарь живёт вкладкой внутри «Задач»: старые ссылки ?tab=calendar ведут туда.
+const RAW_TAB = params.get('tab');
+const START_TAB = RAW_TAB === 'calendar' ? 'tasks' : RAW_TAB;
+const START_VIEW = RAW_TAB === 'calendar' ? 'calendar' : params.get('view');
 // ?task=<id> — открыть задачу сразу (ссылка из уведомления расширения Chrome).
 const START_TASK = params.get('task');
 
 const TABS = [
   ['tasks', 'fa-solid fa-list-check', 'Задачи'],
-  ['calendar', 'fa-regular fa-calendar', 'Календарь'],
   ['murmur', 'fa-solid fa-film', 'Мурмур'],
   ['budget', 'fa-solid fa-wallet', 'Бюджет'],
   ['game', 'fa-solid fa-paw', 'Игра'],
@@ -56,7 +56,11 @@ function isLight(hex) {
 
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined = грузится, null = нет
-  const [tab, setTabState] = useState(() => (TABS.some(([k]) => k === START_TAB) ? START_TAB : loadPref('tab', 'tasks')));
+  const [tab, setTabState] = useState(() => {
+    if (TABS.some(([k]) => k === START_TAB)) return START_TAB;
+    const saved = loadPref('tab', 'tasks');
+    return TABS.some(([k]) => k === saved) ? saved : 'tasks'; // «calendar» из старой версии
+  });
   const setTab = (t) => { setTabState(t); savePref('tab', t); window.scrollTo(0, 0); };
   const [tasks, setTasks] = useState([]);
   const [moods, setMoods] = useState([]);
@@ -68,6 +72,8 @@ export default function App() {
 
   // цвета проектов — у каждого свои (по email), хранятся локально
   const [projectColors, setProjectColors] = useState({});
+  // проекты, задачи из которых дублируются в календарь — тоже у каждого свои
+  const [calendarProjects, setCalendarProjectsState] = useState([]);
 
   // уведомления
   const [notifs, setNotifs] = useState([]);
@@ -168,6 +174,7 @@ export default function App() {
     let migrated = false;
     const unsub = subscribeUserState(me.uid, (st, fromServer) => {
       if (st.projectColors) setProjectColors(st.projectColors);
+      setCalendarProjectsState(Array.isArray(st.calendarProjects) ? st.calendarProjects : []);
       if (st.notifReadAt) setReadAt((p) => Math.max(p, st.notifReadAt));
       setPushPrefs(st.push || null);
       // разовый перенос старых локальных настроек в Firestore
@@ -222,6 +229,11 @@ export default function App() {
       }
       return next;
     });
+  };
+
+  const setCalendarProjects = (list) => {
+    setCalendarProjectsState(list);
+    if (me) saveUserState(me.uid, { calendarProjects: list }).catch(() => {});
   };
 
   const projectSuggestions = useMemo(() => (me ? projectsOf(tasks, me.uid) : []), [tasks, me?.uid]);
@@ -294,9 +306,9 @@ export default function App() {
         <Suspense fallback={<div className="empty"><i className="fa-solid fa-spinner fa-spin" /></div>}>
         {tab === 'tasks' && (
           <TasksView tasks={tasks} me={me} users={users} userOf={userOf} onOpen={setModal} projectColors={projectColors}
-            moods={moods} moodLegends={moodLegends} initialMode={START_VIEW} />
+            moods={moods} moodLegends={moodLegends} initialMode={START_VIEW}
+            calendarProjects={calendarProjects} onNew={() => setModal({})} />
         )}
-        {tab === 'calendar' && <CalendarView tasks={tasks} me={me} users={users} moods={moods} moodLegends={moodLegends} onOpen={setModal} />}
         {tab === 'murmur' && <MurmurView items={murmur} me={me} users={users} userOf={userOf} />}
         {tab === 'budget' && <BudgetView me={me} userOf={userOf} />}
         {tab === 'game' && <GameView tasks={tasks} me={me} users={users} />}
@@ -305,15 +317,12 @@ export default function App() {
             tasks={tasks} me={me} users={users}
             theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}
             projectColors={projectColors} setProjectColor={setProjectColor} pushPrefs={pushPrefs}
+            calendarProjects={calendarProjects} setCalendarProjects={setCalendarProjects}
           />
         )}
         </Suspense>
         </ErrorBoundary>
       </main>
-
-      {tab === 'tasks' && (
-        <button className="fab" onClick={() => setModal({})} aria-label="Новая задача (подробно)"><i className="fa-solid fa-plus" /></button>
-      )}
 
       <nav className="nav">
         {TABS.map(([k, icon, label]) => (

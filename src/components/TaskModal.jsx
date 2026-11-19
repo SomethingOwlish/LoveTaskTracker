@@ -4,6 +4,7 @@ import { Avatar } from './Avatar';
 import { Sheet, Switch } from './Sheet';
 import { completeWithUndo, deleteWithUndo } from '../lib/actions';
 import { toDate, toLocalInput, fmtDateTime } from '../lib/util';
+import { defaultDeadline } from '../lib/taskDoc';
 import {
   createTask, updateTask, reopenTask,
   approveTask, returnTask, addComment, subscribeComments,
@@ -94,7 +95,8 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
     assigneeUid: task?.assigneeUid || me.uid,
     importance: task?.priorityMatrix?.importance ?? 0,
     urgency: task?.priorityMatrix?.urgency ?? 0,
-    deadline: task?.deadline ? toLocalInput(toDate(task.deadline)) : '',
+    // новой задаче срок сразу «сегодня»; у старой без срока поле остаётся пустым
+    deadline: task ? (task.deadline ? toLocalInput(toDate(task.deadline)) : '') : toLocalInput(defaultDeadline()),
     estimateMin: task?.estimateMin ?? '',
     actualMin: task?.actualMin ?? '',
     tags: task?.tags || [],
@@ -209,8 +211,9 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
           <div className="row" style={{ marginTop: 8 }}>
             <button type="button" className="btn btn-sm" onClick={() => { const d = new Date(); d.setHours(18, 0, 0, 0); set('deadline', toLocalInput(d)); }}>Сегодня</button>
             <button type="button" className="btn btn-sm" onClick={() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(18, 0, 0, 0); set('deadline', toLocalInput(d)); }}>Завтра</button>
-            <button type="button" className="btn btn-sm btn-ghost" onClick={() => set('deadline', '')}>Очистить</button>
+            {editing && <button type="button" className="btn btn-sm btn-ghost" onClick={() => set('deadline', '')}>Очистить</button>}
           </div>
+          {!editing && !f.deadline && <div className="hint">Без срока задача встанет на сегодня.</div>}
         </div>
 
         <div className="field">

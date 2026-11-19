@@ -3,6 +3,13 @@
    firebase/firestore/lite. Классы Timestamp у них разные, поэтому
    serverTimestamp и Timestamp передаются снаружи. */
 
+// Срок по умолчанию для новой задачи без срока — конец сегодняшнего дня.
+export function defaultDeadline(now = new Date()) {
+  const d = new Date(now);
+  d.setHours(23, 59, 0, 0);
+  return d;
+}
+
 export function buildTaskDoc(data, { serverTimestamp, Timestamp }) {
   const assigneeUid = data.assigneeUid || data.authorUid;
   return {
@@ -13,7 +20,7 @@ export function buildTaskDoc(data, { serverTimestamp, Timestamp }) {
     status: 'open',
     needsReview: !!data.needsReview,
     priorityMatrix: { importance: data.importance ?? 0, urgency: data.urgency ?? 0 },
-    deadline: data.deadline ? Timestamp.fromDate(new Date(data.deadline)) : null,
+    deadline: Timestamp.fromDate(data.deadline ? new Date(data.deadline) : defaultDeadline()),
     estimateMin: data.estimateMin ?? null,
     actualMin: data.actualMin ?? null,
     tags: data.tags || [],
