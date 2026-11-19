@@ -14,7 +14,8 @@ import { reportError, toastError } from './toast';
    balance и income/expense у проектов — счётчики, которые меняются тем же
    батчем, что и операция (increment). Поэтому для остатков не нужно читать
    всю историю: грузим только операции открытого месяца и запланированные.
-   budgetTx/{id}       { type: income|expense|transfer, amount, walletId|null, toWalletId?,
+   budgetTx/{id}       { type: income|expense|transfer, amount, currency, walletId|null, toWalletId?,
+                         origCurrency?, origAmount?, origFee?, rate?  — если ввели в другой валюте,
                          category, note, date, planned, projectId|null, receiptId|null,
                          items: [{id,title,amount,category}], authorUid, createdAt }
    budgetProjects/{id} { name, note, color, target, income, expense, archived, createdAt }
@@ -147,6 +148,11 @@ function txData(d) {
     projectId: d.projectId || null,
     receiptId: d.receiptId || null,
     items: (d.items || []).filter((x) => x.amount > 0),
+    // исходная валюта, если сумма пересчитана (см. convertInput в budgetMath)
+    origCurrency: d.origCurrency || null,
+    origAmount: d.origCurrency ? Number(d.origAmount) || 0 : null,
+    origFee: d.origCurrency && d.origFee ? Number(d.origFee) : null,
+    rate: d.origCurrency ? Number(d.rate) || null : null,
   };
 }
 

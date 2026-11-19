@@ -15,7 +15,8 @@ export function subscribeRates(cb) {
   return onSnapshot(REF, { includeMetadataChanges: true }, (s) => {
     const d = s.data();
     cb(d?.rates ? d : FALLBACK);
-    const stale = !d?.updatedAt || Date.now() - d.updatedAt > MAX_AGE;
+    // старый кэш хранил только 4 валюты — обновляем, чтобы появились остальные
+    const stale = !d?.updatedAt || Date.now() - d.updatedAt > MAX_AGE || Object.keys(d.rates || {}).length < 10;
     if (stale && !refreshed && !s.metadata.fromCache) {
       refreshed = true;
       refreshRates().catch(() => {});
@@ -27,9 +28,10 @@ async function refreshRates() {
   const r = await fetch('https://open.er-api.com/v6/latest/EUR');
   const j = await r.json();
   if (j.result !== 'success') return;
+  // храним все курсы (~160 чисел): нужны и для валюты «другое» в операциях
   const rates = { EUR: 1 };
-  ['RSD', 'USD', 'RUB'].forEach((c) => { if (j.rates?.[c]) rates[c] = j.rates[c]; });
+  Object.entries(j.rates || {}).forEach(([c, v]) => { if (/^[A-Z]{3}$/.test(c) && v > 0) rates[c] = v; });
   await setDoc(REF, { base: 'EUR', rates, updatedAt: Date.now() });
 }
 
-export { convert } from './currency';
+export { convert, fxRate } from './currency';

@@ -6,6 +6,11 @@
 //    Доход: на счёт приходит amount − fee. Перевод: из кошелька уходит amount + fee;
 //  * перевод между валютами: toAmount — сколько пришло в валюте кошелька-получателя.
 //  * fee попадает в свою категорию (feeCategory: «Комиссии» или «Налоги»).
+//  * доход/расход в другой валюте (зарплата в долларах на динарную карту):
+//    origCurrency/origAmount/origFee — как было введено, rate — курс
+//    «1 origCurrency = rate currency»; amount/fee/items уже пересчитаны в
+//    валюту кошелька (без кошелька — в основную), поэтому все счётчики и
+//    сводки работают с ними как раньше. Старые операции без orig* — как были.
 import { toDate } from './util';
 import { DEFAULT_BASE, convert } from './currency';
 
@@ -60,6 +65,40 @@ export function effectDiff(next, prev) {
     if (!Object.keys(byCur).length) delete projects[id];
   });
   return { wallets, projects };
+}
+
+/* ---------- Пересчёт введённой суммы ---------- */
+// d: { type, amount, fee, items, origCurrency, rate } — суммы в валюте ввода;
+// cur — валюта кошелька (или основная). Возвращает поля для сохранения.
+export function convertInput(d, cur) {
+  const from = d.origCurrency || cur;
+  const rate = Number(d.rate);
+  const same = from === cur || d.type === 'transfer';
+  if (!same && !(rate > 0)) throw new Error('Нет курса ' + from + ' → ' + cur);
+  const k = same ? 1 : rate;
+  const items = (d.items || []).map((x) => (same ? x : { ...x, amount: r2(num(x.amount) * k), origAmount: num(x.amount) }));
+  return {
+    currency: cur,
+    amount: r2(num(d.amount) * k),
+    fee: r2(num(d.fee) * k),
+    items,
+    origCurrency: same ? null : from,
+    origAmount: same ? null : r2(num(d.amount)),
+    origFee: same || !num(d.fee) ? null : r2(num(d.fee)),
+    rate: same ? null : rate,
+  };
+}
+
+// Обратно для формы правки: суммы в валюте ввода
+export function inputOf(t) {
+  if (!t?.origCurrency || !(t.rate > 0)) return { origCurrency: null, amount: t?.amount, fee: t?.fee, items: t?.items || [], rate: null };
+  return {
+    origCurrency: t.origCurrency,
+    rate: t.rate,
+    amount: t.origAmount ?? r2(num(t.amount) / t.rate),
+    fee: t.origFee ?? (num(t.fee) ? r2(num(t.fee) / t.rate) : 0),
+    items: (t.items || []).map((x) => ({ ...x, amount: x.origAmount ?? r2(num(x.amount) / t.rate) })),
+  };
 }
 
 /* ---------- Подсчёты ---------- */
