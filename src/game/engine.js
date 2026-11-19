@@ -12,8 +12,8 @@
    видов, что у тебя уже есть на ★3.
 
    Каждую неделю выходит один гигант — один для обоих, но урон у каждого
-   свой. Задачи дают только монеты. Всё остальное покупается за них.
-   Награды не хранятся, а считаются из закрытых за неделю задач.
+   свой. Задачи, настроение, Мурмур и бюджет дают только монеты. Всё остальное покупается за них.
+   Награды не хранятся, а считаются из того, что сделано за неделю.
 
    Здесь только чистые функции (без Firestore и React) — их гоняют тесты.
    ============================================================ */
@@ -271,10 +271,19 @@ export function makePack(seed, giant) {
   return out;
 }
 
-/* ---------------- Награды за задачи ----------------
-   Закрытая задача — 2 монеты, а с подзадачами — монета за каждую
-   подзадачу (но не меньше двух). Сверху: важная +1…+3 (половина
-   важности), срочная +1. */
+/* ---------------- Награды ----------------
+   Монеты недели считаются из того, что сделано в приложении:
+   · задача — 1 монета, с подзадачами — монета за каждую подзадачу;
+     важная или срочная — ещё +2 (простая важная = 3); закрыта днём
+     раньше срока — ещё +1;
+   · настроение — 1 за каждый отмеченный день, +1 если отмечена вся неделя,
+     +2 за день, когда отметились оба;
+   · Мурмур — фильм или досмотренный сериал 1, пройденная игра 10
+     (игры бывают огромные), +1 за свой отзыв; серия сериала — 0,5
+     (за неделю округляется вниз, отметка серий общая);
+   · бюджет — 1 за каждый день, когда что-то внесено, +1 за разобранный чек. */
+
+export const REWARD = { item: 1, hot: 2, early: 1, moodDay: 1, moodWeek: 1, moodPair: 2, media: 1, game: 10, episode: 0.5, review: 1, budgetDay: 1, receipt: 1 };
 
 function msOf(ts) {
   if (!ts) return 0;
@@ -287,24 +296,61 @@ export function taskReward(t) {
   const imp = t.priorityMatrix?.importance ?? 0;
   const urg = t.priorityMatrix?.urgency ?? 0;
   const items = (t.checklist || []).length;
-  return Math.max(2, items) + (imp > 0 ? Math.ceil(imp / 2) : 0) + (urg > 0 ? 1 : 0);
+  return Math.max(1, items) * REWARD.item + (imp > 0 || urg > 0 ? REWARD.hot : 0) + (isEarly(t) ? REWARD.early : 0);
 }
 
-export function rewardsFor(tasks, uid, from) {
+// Раньше срока — закрыта в более ранний день, чем срок. Срок по умолчанию —
+// конец дня создания, так что «закрыл сегодня» бонуса не даёт.
+export function isEarly(t) {
+  const done = msOf(t.completedAt);
+  const due = msOf(t.deadline);
+  return !!done && !!due && dayStr(new Date(done)) < dayStr(new Date(due));
+}
+
+export function rewardsFor({ tasks = [], moods = [], media = [], tx = [] }, uid, from) {
   const since = from.getTime();
-  let coins = 0;
+  const fromKey = dayStr(from);
+
   const list = [];
   tasks.forEach((t) => {
     if (t.assigneeUid !== uid) return;
     if (t.status !== 'done' && t.status !== 'approved') return;
     const at = msOf(t.completedAt);
     if (!at || at < since) return;
-    const c = taskReward(t);
-    coins += c;
-    list.push({ id: t.id, title: t.title, at, coins: c, items: (t.checklist || []).length });
+    list.push({ id: t.id, title: t.title, at, coins: taskReward(t), items: (t.checklist || []).length, early: isEarly(t) });
   });
   list.sort((a, b) => b.at - a.at);
-  return { coins, list };
+  const taskCoins = list.reduce((n, x) => n + x.coins, 0);
+
+  const inWeek = moods.filter((m) => m.day >= fromKey && daysBetween(fromKey, m.day) < 7);
+  const mine = new Set(inWeek.filter((m) => m.uid === uid).map((m) => m.day));
+  const pairDays = new Set(inWeek.filter((m) => m.uid !== uid && mine.has(m.day)).map((m) => m.day)).size;
+  const moodDays = mine.size;
+  const moodCoins = moodDays * REWARD.moodDay + (moodDays >= 7 ? REWARD.moodWeek : 0) + pairDays * REWARD.moodPair;
+
+  const seen = media
+    .filter((m) => m.status === 'done' && msOf(m.doneAt) >= since && (m.doneBy === uid || m.ratings?.[uid] != null))
+    .map((m) => ({ id: m.id, title: m.title, kind: m.kind, at: msOf(m.doneAt), review: !!m.reviews?.[uid]?.trim?.() }))
+    .map((m) => ({ ...m, coins: (m.kind === 'game' ? REWARD.game : REWARD.media) + (m.review ? REWARD.review : 0) }))
+    .sort((a, b) => b.at - a.at);
+  const episodes = media.reduce((n, m) => n + Object.values(m.epAt || {}).filter((t) => msOf(t) >= since).length, 0);
+  const episodeCoins = Math.floor(episodes * REWARD.episode);
+  const mediaCoins = seen.reduce((n, m) => n + m.coins, 0) + episodeCoins;
+
+  // Повторяющиеся платежи заводятся сами — за них монет нет.
+  const myTx = tx.filter((t) => t.authorUid === uid && !t.recurringId && msOf(t.createdAt) >= since);
+  const budgetDays = new Set(myTx.map((t) => dayStr(new Date(msOf(t.createdAt))))).size;
+  const receipts = myTx.filter((t) => t.receiptId).length;
+  const budgetCoins = budgetDays * REWARD.budgetDay + receipts * REWARD.receipt;
+
+  return {
+    coins: taskCoins + moodCoins + mediaCoins + budgetCoins,
+    list,
+    tasks: taskCoins,
+    mood: { days: moodDays, pairDays, coins: moodCoins },
+    media: { list: seen, episodes, coins: mediaCoins },
+    budget: { days: budgetDays, receipts, coins: budgetCoins },
+  };
 }
 
 /* ---------------- Ран ---------------- */
@@ -351,7 +397,8 @@ export function economy(run, rewards) {
   const xp = (run.xpBought || 0) + (run.xpDaily || 0);
   const level = levelOf(xp);
   return {
-    coins: START_COINS + rewards.coins + (run.interest || 0) - (run.spent || 0),
+    // Не ниже нуля: при смене правил наград посреди недели баланс не уходит в минус.
+    coins: Math.max(0, START_COINS + rewards.coins + (run.interest || 0) - (run.spent || 0)),
     xp, level, slots: teamSize(level), next: nextLevelXp(xp),
   };
 }

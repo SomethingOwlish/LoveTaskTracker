@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  parseTmdbSeasons, seriesProgress, progressLabel, toggleEpisode, toggleSeason, watchedUpTo, hasSeasons,
+  parseTmdbSeasons, seriesProgress, progressLabel, toggleEpisode, toggleSeason, watchedUpTo, hasSeasons, epAtPatch,
 } from '../src/lib/seasons';
 
 // Ответ TMDB /tv/{id}, урезанный до нужных полей (Severance, ноябрь 2026 — условно)
@@ -88,5 +88,13 @@ describe('отметки серий', () => {
   });
   it('watchedUpTo: всё до S2E3, прошлые отметки остаются', () => {
     expect(watchedUpTo(show({ s3: [] , s2: [6] }), 2, 3)).toEqual({ s1: [1, 2, 3, 4, 5, 6, 7, 8, 9], s2: [1, 2, 3, 6], s3: [] });
+  });
+});
+
+describe('epAtPatch', () => {
+  it('ставит время новым сериям и снимает убранные', () => {
+    const p = epAtPatch({ s1: [1, 2], s2: [1] }, { s1: [1, 2, 3], s2: [] , s3: [1] }, 5, 'DEL');
+    expect(p).toEqual({ 'epAt.s1e3': 5, 'epAt.s2e1': 'DEL', 'epAt.s3e1': 5 });
+    expect(epAtPatch(undefined, { s1: [1] }, 7, 'DEL')).toEqual({ 'epAt.s1e1': 7 });
   });
 });

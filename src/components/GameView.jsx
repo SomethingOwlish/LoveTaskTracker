@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { subscribeUserState, saveGame, saveUserState } from '../lib/db';
+import { subscribeUserState, saveGame, saveUserState, subscribeMoods, subscribeMurmur } from '../lib/db';
+import { subscribeTxCreatedSince } from '../lib/budget';
 import { toast, reportError } from '../lib/toast';
 import { Sheet } from './Sheet';
 import { Avatar } from './Avatar';
 import {
   SPECIES, BY_ID, GIANTS, ELEMENTS, CLASSES, FAMILIES, REGIONS, SKILLS, SIZE_BONUS, RARITY, PLACE,
   FRONT_SIZE, BACK_SIZE, BENCH_SIZE, REROLL_COST, XP_BUY, GIANT_HP, LEVEL_XP, DAILY_XP, MAX_STARS, MISPLACED,
-  newRun, normalizeRun, makePack, repack, isFresh, economy, rewardsFor, ensureShop, buy, sell, move, reroll, buyXp,
+  newRun, normalizeRun, START_COINS, makePack, repack, isFresh, economy, rewardsFor, ensureShop, buy, sell, move, reroll, buyXp,
   teamOf, bonds, sizeBonus, tick, interestFor, simulateRaid, giantOf, weekKey, weekStart, dayStr, dayIndex,
   unitCost, offerCost, oddsFor, battleHp, statsOf, imgOf, formOf, placeOf, fits, isWeekend, ENGINE_V,
   fightCost, fightsOn, giantPower,
@@ -355,7 +356,20 @@ export function GameView({ tasks, me, users }) {
   useEffect(() => subscribeUserState(me.uid, (st) => setState(st)), [me.uid]);
   useEffect(() => (partner ? subscribeUserState(partner.uid, (st) => setPState(st)) : undefined), [partner?.uid]);
 
-  const rewards = useMemo(() => rewardsFor(tasks, me.uid, weekStart()), [tasks, me.uid]);
+  // Источники монет кроме задач. null — ещё не загрузилось: до этого не
+  // начисляем проценты нового дня, иначе они посчитаются с неполной суммы.
+  const [moods, setMoods] = useState(null);
+  const [media, setMedia] = useState(null);
+  const [tx, setTx] = useState(null);
+  useEffect(() => subscribeMoods(week, dayStr(new Date(weekStart().getTime() + 6 * 864e5)), setMoods), [week]);
+  useEffect(() => subscribeMurmur(setMedia), []);
+  useEffect(() => subscribeTxCreatedSince(weekStart(), setTx), [week]);
+  const sourcesReady = moods !== null && media !== null && tx !== null;
+
+  const rewards = useMemo(
+    () => rewardsFor({ tasks, moods: moods || [], media: media || [], tx: tx || [] }, me.uid, weekStart()),
+    [tasks, moods, media, tx, me.uid],
+  );
 
   const stored = state?.game;
   const current = stored?.week === week && Array.isArray(stored.front);
@@ -384,11 +398,11 @@ export function GameView({ tasks, me, users }) {
 
   // Новый день — проценты с накоплений и опыт.
   useEffect(() => {
-    if (!run || !current || (run.lastTick || today) >= today) return;
+    if (!run || !current || !sourcesReady || (run.lastTick || today) >= today) return;
     const next = tick(run, rewards, today);
     saveGame(me.uid, next).catch(reportError);
     toast(`Новый день: +${next.interest - (run.interest || 0)} мон. процентов и +${next.xpDaily - (run.xpDaily || 0)} опыта`);
-  }, [run, current, today]);
+  }, [run, current, today, sourcesReady]);
 
   if (!run) return <div className="empty"><i className="fa-solid fa-spinner fa-spin" /></div>;
 
@@ -682,19 +696,32 @@ export function GameView({ tasks, me, users }) {
       {showIncome && (
         <Sheet title="Монеты недели" onClose={() => setShowIncome(false)}>
           <div className="stats" style={{ marginTop: 0 }}>
-            <div className="stat"><div className="n">{rewards.coins}</div><div className="l">за задачи</div></div>
+            <div className="stat"><div className="n">{rewards.coins}</div><div className="l">заработано</div></div>
             <div className="stat"><div className="n">{run.interest || 0}</div><div className="l">проценты</div></div>
             <div className="stat"><div className="n">{run.spent || 0}</div><div className="l">потрачено</div></div>
           </div>
+          <div className="pm-income"><span><i className="fa-solid fa-list-check" /> Задачи <span className="dim">· {rewards.list.length}</span></span><b><i className="fa-solid fa-coins" /> {rewards.tasks}</b></div>
+          <div className="pm-income"><span><i className="fa-solid fa-face-smile" /> Настроение <span className="dim">· {rewards.mood.days} из 7 дней{rewards.mood.pairDays ? `, вместе ${rewards.mood.pairDays}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.mood.coins}</b></div>
+          <div className="pm-income"><span><i className="fa-solid fa-film" /> Мурмур <span className="dim">· {rewards.media.list.length}{rewards.media.episodes ? `, серий ${rewards.media.episodes}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.media.coins}</b></div>
+          <div className="pm-income"><span><i className="fa-solid fa-wallet" /> Бюджет <span className="dim">· {rewards.budget.days} дн.{rewards.budget.receipts ? `, чеков ${rewards.budget.receipts}` : ''}</span></span><b><i className="fa-solid fa-coins" /> {rewards.budget.coins}</b></div>
           <p className="hint">
-            Задача — 2 монеты, а с подзадачами — монета за каждую подзадачу (не меньше двух). Важная ещё +1…+3 (половина важности), срочная +1.
-            На старте недели — 8 монет. Каждый новый день: проценты с отложенного (+1 за 10, до +5) и +{DAILY_XP} опыта.
+            Задача — 1 монета, с подзадачами — монета за каждую подзадачу; важная или срочная — ещё +2; закрыта днём раньше срока — ещё +1.
+            Настроение — 1 за каждый отмеченный день, +1, если отмечена вся неделя, и +2 за день, когда отметились оба.
+            Мурмур: фильм или досмотренный сериал — 1, пройденная игра — 10, серия — ½ (за неделю вниз), свой отзыв — ещё +1.
+            День, когда что-то внесено в бюджет, — 1; разобранный чек — ещё +1.
+            На старте недели — {START_COINS} монет. Каждый новый день: проценты с отложенного (+1 за 10, до +5) и +{DAILY_XP} опыта.
             Всё остальное — особи, опыт, перебросы и лишние вылазки — покупается за монеты.
           </p>
           {rewards.list.length === 0 && <div className="empty">На этой неделе задач пока не закрыто.</div>}
           {rewards.list.map((r) => (
             <div key={r.id} className="pm-income">
-              <span>{r.title}{r.items ? <span className="dim"> · {r.items} подзадач</span> : null}</span>
+              <span>{r.title}{r.items ? <span className="dim"> · {r.items} подзадач</span> : null}{r.early ? <span className="dim"> · раньше срока</span> : null}</span>
+              <b><i className="fa-solid fa-coins" /> {r.coins}</b>
+            </div>
+          ))}
+          {rewards.media.list.map((r) => (
+            <div key={r.id} className="pm-income">
+              <span>{r.title}<span className="dim"> · {r.kind === 'game' ? 'пройдено' : 'просмотрено'}{r.review ? ', отзыв' : ''}</span></span>
               <b><i className="fa-solid fa-coins" /> {r.coins}</b>
             </div>
           ))}

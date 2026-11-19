@@ -9,16 +9,26 @@ const NONE = { coins: 0 };
 const common = SPECIES.find((s) => s.rar === 'common').id;
 const unit = (s, st = 1, u = Math.random().toString(36)) => ({ s, st, u });
 
-describe('награды за задачи', () => {
-  it('задача — 2 монеты, с подзадачами — монета за каждую', () => {
-    expect(taskReward({})).toBe(2);
-    expect(taskReward({ checklist: [1] })).toBe(2);
+describe('награды', () => {
+  it('задача — 1 монета, с подзадачами — за каждую, важная/срочная +2', () => {
+    expect(taskReward({})).toBe(1);
+    expect(taskReward({ checklist: [1] })).toBe(1);
     expect(taskReward({ checklist: [1, 2, 3, 4, 5] })).toBe(5);
-    expect(taskReward({ priorityMatrix: { importance: 5, urgency: 2 }, checklist: [1, 2, 3, 4, 5] })).toBe(5 + 3 + 1);
+    expect(taskReward({ priorityMatrix: { importance: 3 } })).toBe(3);
+    expect(taskReward({ priorityMatrix: { urgency: 1 } })).toBe(3);
+    expect(taskReward({ priorityMatrix: { importance: 5, urgency: 2 }, checklist: [1, 2, 3, 4, 5] })).toBe(7);
+    expect(taskReward({ priorityMatrix: { importance: -2, urgency: -1 } })).toBe(1);
   });
+  it('закрыта днём раньше срока — +1', () => {
+    const d = (day, h) => new Date(2026, 10, day, h);
+    expect(taskReward({ completedAt: d(17, 10), deadline: d(18, 23) })).toBe(2);
+    expect(taskReward({ completedAt: d(18, 10), deadline: d(18, 23) })).toBe(1);
+    expect(taskReward({ completedAt: d(19, 10), deadline: d(18, 23) })).toBe(1);
+    expect(taskReward({ completedAt: d(17, 10) })).toBe(1);
+  });
+  const from = new Date(2026, 10, 16);
+  const at = (d, h = 12) => ({ toMillis: () => new Date(2026, 10, d, h).getTime() });
   it('считает только свои закрытые задачи этой недели', () => {
-    const from = new Date(2026, 10, 16);
-    const at = (d) => ({ toMillis: () => new Date(2026, 10, d).getTime() });
     const tasks = [
       { id: 'a', assigneeUid: 'me', status: 'done', completedAt: at(17) },
       { id: 'b', assigneeUid: 'me', status: 'approved', completedAt: at(18), priorityMatrix: { importance: 2 } },
@@ -26,9 +36,55 @@ describe('награды за задачи', () => {
       { id: 'd', assigneeUid: 'you', status: 'done', completedAt: at(17) },
       { id: 'e', assigneeUid: 'me', status: 'open' },
     ];
-    const r = rewardsFor(tasks, 'me', from);
-    expect(r.coins).toBe(5);
+    const r = rewardsFor({ tasks }, 'me', from);
+    expect(r.coins).toBe(4);
     expect(r.list.map((x) => x.id)).toEqual(['b', 'a']);
+  });
+  it('настроение — монета за день и +1 за всю неделю', () => {
+    const mood = (uid, day) => ({ uid, day: `2026-11-${day}` });
+    const some = rewardsFor({ moods: [mood('me', 16), mood('me', 17), mood('you', 18), mood('me', 15), mood('me', 23)] }, 'me', from);
+    expect(some.mood).toEqual({ days: 2, pairDays: 0, coins: 2 });
+    const all = rewardsFor({ moods: [16, 17, 18, 19, 20, 21, 22].map((d) => mood('me', d)) }, 'me', from);
+    expect(all.mood).toEqual({ days: 7, pairDays: 0, coins: 8 });
+  });
+  it('настроение вместе — +2 за день, когда отметились оба', () => {
+    const mood = (uid, day) => ({ uid, day: `2026-11-${day}` });
+    const r = rewardsFor({ moods: [mood('me', 16), mood('you', 16), mood('me', 17), mood('you', 18), mood('you', 15), mood('me', 15)] }, 'me', from);
+    expect(r.mood).toEqual({ days: 2, pairDays: 1, coins: 4 });
+  });
+  it('Мурмур — монета за просмотренное этой недели', () => {
+    const media = [
+      { id: 'm1', status: 'done', doneAt: at(17), doneBy: 'me', reviews: { me: 'Хорошо', you: '' } },
+      { id: 'm2', status: 'done', doneAt: at(18), doneBy: 'you', ratings: { me: 4 } },
+      { id: 'm3', status: 'done', doneAt: at(18), doneBy: 'you', ratings: { you: 5 } },
+      { id: 'm4', status: 'done', doneAt: at(10), doneBy: 'me' },
+      { id: 'm5', status: 'want' },
+    ];
+    expect(rewardsFor({ media }, 'me', from).media.coins).toBe(3);
+    expect(rewardsFor({ media }, 'you', from).media.coins).toBe(2);
+  });
+  it('Мурмур — игра 10, серия ½ за неделю вниз', () => {
+    const media = [
+      { id: 'g', kind: 'game', status: 'done', doneAt: at(17), doneBy: 'me' },
+      { id: 's', kind: 'series', status: 'want', epAt: { s1e1: at(16), s1e2: at(17), s1e3: at(18), s1e4: at(10) } },
+      { id: 't', kind: 'series', status: 'want', epAt: { s2e1: new Date(2026, 10, 19).getTime() } },
+    ];
+    const r = rewardsFor({ media }, 'me', from).media;
+    expect(r.episodes).toBe(4);
+    expect(r.coins).toBe(10 + 2);
+    expect(rewardsFor({ media: media.slice(1, 2) }, 'me', from).media.coins).toBe(1);
+  });
+  it('бюджет — монета за день, когда что-то внесено', () => {
+    const tx = [
+      { authorUid: 'me', createdAt: at(17, 9) },
+      { authorUid: 'me', createdAt: at(17, 20), receiptId: 'rc1' },
+      { authorUid: 'me', createdAt: at(19) },
+      { authorUid: 'me', createdAt: at(19), recurringId: 'r', planned: true },
+      { authorUid: 'me', createdAt: at(20), recurringId: 'r' },
+      { authorUid: 'you', createdAt: at(21) },
+      { authorUid: 'me', createdAt: at(12) },
+    ];
+    expect(rewardsFor({ tx }, 'me', from).budget).toEqual({ days: 2, receipts: 1, coins: 3 });
   });
 });
 

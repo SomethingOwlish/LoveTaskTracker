@@ -7,6 +7,7 @@ import { nextFutureRecurrence } from './recurrence';
 import { tsMs } from './util';
 import { buildTaskDoc, assignedNotification } from './taskDoc';
 import { buildMurmurDoc } from './murmurUtil';
+import { epAtPatch } from './seasons';
 import { cleanEventData } from './calendar';
 import { reportError } from './toast';
 
@@ -392,11 +393,14 @@ export async function rateMurmur(item, uid, rating, review) {
   return updateDoc(doc(db, 'murmur', item.id), patch);
 }
 // Серии сериала (см. lib/seasons.js). Отметка общая — смотрим вместе.
+// epAt — когда отмечена каждая серия: за серии этой недели в игре даются монеты.
 export async function setMurmurSeasonWatched(item, n, list) {
-  return updateDoc(doc(db, 'murmur', item.id), { [`watched.s${n}`]: list, watchedAt: serverTimestamp() });
+  const eps = epAtPatch(item.watched, { ...(item.watched || {}), [`s${n}`]: list }, Date.now(), deleteField());
+  return updateDoc(doc(db, 'murmur', item.id), { [`watched.s${n}`]: list, watchedAt: serverTimestamp(), ...eps });
 }
 export async function setMurmurWatched(item, watched) {
-  return updateDoc(doc(db, 'murmur', item.id), { watched, watchedAt: serverTimestamp() });
+  const eps = epAtPatch(item.watched, watched, Date.now(), deleteField());
+  return updateDoc(doc(db, 'murmur', item.id), { watched, watchedAt: serverTimestamp(), ...eps });
 }
 export async function unwatchMurmur(item) {
   return updateDoc(doc(db, 'murmur', item.id), { status: 'want', doneAt: null, doneBy: null, ratings: {}, reviews: {} });
