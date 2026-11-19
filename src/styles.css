@@ -1100,3 +1100,13 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 .wish-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .wish-foot a.chip { text-decoration: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wish-date { font-size: 12px; }
+
+/* Доли цветов дня: полоса с перетаскиваемыми границами */
+.share-bar { position: relative; display: flex; height: 28px; margin-top: 10px; border-radius: 8px; overflow: hidden; touch-action: none; user-select: none; }
+.share-seg { flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #1a1a1a; }
+.share-handle {
+  position: absolute; top: 0; bottom: 0; width: 24px; margin-left: -12px; cursor: ew-resize; touch-action: none;
+  display: flex; justify-content: center;
+}
+.share-handle::before { content: ''; width: 4px; height: 100%; background: var(--surface); box-shadow: 0 0 0 1px #0002; border-radius: 2px; }
+.share-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }

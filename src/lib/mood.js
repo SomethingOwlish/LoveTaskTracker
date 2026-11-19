@@ -22,9 +22,8 @@ export const DEFAULT_MOOD_LEGEND = [
   { id: 'sick', color: '#9bc53d', label: 'Нездоровится' },
 ];
 
-// Сколько цветов можно отметить за один день: больше в ячейку календаря
-// уже не поместится различимо.
-export const MAX_MOODS_PER_DAY = 4;
+// Минимальная доля одного цвета дня в процентах — тоньше полосу не разглядеть.
+export const MIN_SHARE = 5;
 
 export function legendOf(legends, uid) {
   const l = legends?.[uid];
@@ -60,16 +59,60 @@ export function resolveMood(mood, legends) {
     const it = legend.find((x) => x.id === r.itemId);
     return { id: r.itemId, color: it?.color || r.color || '#888888', label: it?.label || r.label || '?' };
   });
+  const pcts = moodShares(raw);
+  items.forEach((x, i) => { x.pct = pcts[i]; });
   return { items, color: items[0].color, label: items.map((x) => x.label).join(', '), note: mood.note || '' };
 }
 
+// Целые проценты, в сумме ровно 100, пропорционально весам
+// (остаток раздаём тем, у кого больше дробная часть).
+export function toPercents(weights) {
+  const w = weights.map((x) => (Number.isFinite(x) && x > 0 ? x : 0));
+  const sum = w.reduce((a, x) => a + x, 0);
+  if (!w.length) return [];
+  if (!sum) return toPercents(w.map(() => 1));
+  const raw = w.map((x) => (x / sum) * 100);
+  const out = raw.map(Math.floor);
+  let rest = 100 - out.reduce((a, x) => a + x, 0);
+  raw.map((x, i) => [x - Math.floor(x), i]).sort((p, q) => q[0] - p[0])
+    .forEach(([, i]) => { if (rest > 0) { out[i] += 1; rest -= 1; } });
+  return out;
+}
+
+// Доли цветов дня в процентах. Старые записи (без pct) — поровну.
+export function moodShares(items) {
+  if (!items.length) return [];
+  const has = items.every((x) => Number.isFinite(x.pct) && x.pct > 0);
+  return toPercents(has ? items.map((x) => x.pct) : items.map(() => 1));
+}
+
+const withShares = (items, pcts) => items.map((x, i) => ({ ...x, pct: pcts[i] }));
+
 // Новый набор выбранных пунктов после нажатия на item: снять, если уже
-// выбран; добавить, если есть место; иначе заменить самый старый.
-export function toggleMoodItem(current, item, max = MAX_MOODS_PER_DAY) {
-  const list = current.filter((x) => x.itemId !== item.id);
-  if (list.length < current.length) return list;
-  const next = [...list, { itemId: item.id, color: item.color, label: item.label }];
-  return next.length > max ? next.slice(next.length - max) : next;
+// выбран (его доля делится между остальными пропорционально), иначе
+// добавить — новый цвет получает равную долю, остальные ужимаются.
+export function toggleMoodItem(current, item) {
+  const shares = moodShares(current);
+  const keep = current.map((x, i) => ({ ...x, pct: shares[i] })).filter((x) => x.itemId !== item.id);
+  if (keep.length < current.length) return withShares(keep, toPercents(keep.map((x) => x.pct)));
+  const n = keep.length + 1;
+  const add = { itemId: item.id, color: item.color, label: item.label, pct: 100 / n };
+  const next = [...keep.map((x) => ({ ...x, pct: x.pct * (1 - 1 / n) })), add];
+  return withShares(next, toPercents(next.map((x) => x.pct)));
+}
+
+// Перетаскивание границы между полосами i и i+1: pos — где теперь граница,
+// в процентах от начала полосы. Остальные доли не меняются.
+export function moveShareBoundary(items, i, pos) {
+  const pcts = moodShares(items);
+  if (i < 0 || i >= pcts.length - 1) return items;
+  const before = pcts.slice(0, i).reduce((a, x) => a + x, 0);
+  const pair = pcts[i] + pcts[i + 1];
+  const left = Math.min(pair - MIN_SHARE, Math.max(MIN_SHARE, Math.round(pos - before)));
+  if (left === pcts[i]) return items;
+  pcts[i] = left;
+  pcts[i + 1] = pair - left;
+  return withShares(items, pcts);
 }
 
 export function moodIndex(moods) {
@@ -78,27 +121,35 @@ export function moodIndex(moods) {
   return m;
 }
 
-// CSS-градиент: цвета дня равными вертикальными полосами.
-export function stripes(colors) {
-  if (!colors.length) return null;
-  if (colors.length === 1) return `linear-gradient(${colors[0]}, ${colors[0]})`;
-  const w = 100 / colors.length;
-  const stops = colors.map((c, i) => `${c} ${+(i * w).toFixed(2)}% ${+((i + 1) * w).toFixed(2)}%`);
+// CSS-градиент: цвета дня вертикальными полосами слева направо,
+// ширина полосы — доля цвета. Принимает цвета или {color, pct}.
+export function stripes(list) {
+  if (!list.length) return null;
+  const items = list.map((x) => (typeof x === 'string' ? { color: x } : x));
+  if (items.length === 1) return `linear-gradient(${items[0].color}, ${items[0].color})`;
+  const pcts = moodShares(items);
+  let at = 0;
+  const stops = items.map((x, i) => {
+    const from = at;
+    at += pcts[i];
+    return `${x.color} ${from}% ${at}%`;
+  });
   return `linear-gradient(90deg, ${stops.join(', ')})`;
 }
 
-// Фон ячейки календаря. Для двоих: верхняя половина — первый, нижняя — второй.
+// Фон ячейки календаря. Для двоих: левая половина — первый, правая — второй,
+// между ними тонкий просвет, чтобы полосы двух людей не сливались.
 export function moodCellStyle(a, b, whose) {
-  const ca = a ? a.items.map((x) => x.color) : [];
-  const cb = b ? b.items.map((x) => x.color) : [];
-  if (whose === 'me') return ca.length ? { background: stripes(ca) } : undefined;
-  if (whose === 'partner') return cb.length ? { background: stripes(cb) } : undefined;
-  if (!ca.length && !cb.length) return undefined;
+  const ia = a ? a.items : [];
+  const ib = b ? b.items : [];
+  if (whose === 'me') return ia.length ? { background: stripes(ia) } : undefined;
+  if (whose === 'partner') return ib.length ? { background: stripes(ib) } : undefined;
+  if (!ia.length && !ib.length) return undefined;
   const none = 'linear-gradient(transparent, transparent)';
   return {
-    backgroundImage: `${ca.length ? stripes(ca) : none}, ${cb.length ? stripes(cb) : none}`,
-    backgroundSize: '100% 50%, 100% 50%',
-    backgroundPosition: 'top, bottom',
+    backgroundImage: `${ia.length ? stripes(ia) : none}, ${ib.length ? stripes(ib) : none}`,
+    backgroundSize: 'calc(50% - 1px) 100%, calc(50% - 1px) 100%',
+    backgroundPosition: 'left, right',
     backgroundRepeat: 'no-repeat',
   };
 }
