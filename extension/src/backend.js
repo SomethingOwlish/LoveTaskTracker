@@ -10,7 +10,7 @@ import {
 } from 'firebase/firestore/lite';
 import { FIREBASE_PROJECT } from '../../src/firebaseConfig.js';
 import { buildTaskDoc, assignedNotification } from '../../src/lib/taskDoc.js';
-import { buildMurmurDoc } from '../../src/lib/murmurUtil.js';
+import { buildMurmurDoc, sameMurmur } from '../../src/lib/murmurUtil.js';
 import { buildWish } from '../../src/lib/wishMath.js';
 import { OAUTH_CLIENT_ID, REDIRECT_URI } from '../config.js';
 import { person, partnerOf } from './shared.js';
@@ -93,23 +93,28 @@ async function requireMe() {
   return me;
 }
 
-// Есть ли уже такое в Мурмуре: сначала по ссылке, потом по точному названию.
-// 1–2 чтения Firestore на открытие формы на странице фильма.
-export async function findMurmur({ link, title }) {
+// Есть ли уже такое в Мурмуре: сначала по ссылке (адрес страницы фильма — по сути
+// его ID на сайте), потом по названию + году + типу (см. sameMurmur), чтобы
+// ремейки и одноимённые сериалы не считались дублями. 1–2 чтения Firestore.
+export async function findMurmur({ link, title, year = null, kind = null, extId = null }) {
   await requireMe();
   const col = collection(db, 'murmur');
-  const tries = [];
-  if (link) tries.push(query(col, where('link', '==', link), limit(1)));
-  if (title?.trim()) tries.push(query(col, where('title', '==', title.trim()), limit(1)));
-  for (const q of tries) {
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const d = snap.docs[0];
-      const x = d.data();
-      return { id: d.id, title: x.title, kind: x.kind, status: x.status, wantedBy: x.wantedBy || [] };
-    }
+  const pack = (d) => {
+    const x = d.data();
+    return { id: d.id, title: x.title, kind: x.kind, status: x.status, wantedBy: x.wantedBy || [] };
+  };
+  if (link) {
+    const snap = await getDocs(query(col, where('link', '==', link), limit(1)));
+    if (!snap.empty) return pack(snap.docs[0]);
   }
-  return null;
+  const t = title?.trim();
+  if (!t || !kind) return null;
+  const snap = await getDocs(query(col, where('title', '==', t), limit(20)));
+  const me = { title: t, year, kind, extId };
+  const hits = snap.docs.filter((d) => sameMurmur(me, d.data()));
+  // «Хотим» важнее архива: туда можно добавить своё «хочу»
+  const hit = hits.find((d) => d.data().status !== 'done') || hits[0];
+  return hit ? pack(hit) : null;
 }
 
 export async function addMurmur(data) {
