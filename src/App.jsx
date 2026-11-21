@@ -384,6 +384,7 @@ export default function App() {
           onClose={() => setModal(null)}
           projectSuggestions={projectSuggestions}
           tagSuggestions={tagSuggestions}
+          tasks={tasks}
         />
       )}
     </div>

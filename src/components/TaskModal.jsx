@@ -5,19 +5,22 @@ import { Sheet, Switch } from './Sheet';
 import { completeWithUndo, deleteWithUndo } from '../lib/actions';
 import { toDate, toLocalInput, fmtDateTime } from '../lib/util';
 import { defaultDeadline } from '../lib/taskDoc';
+import { parseEvery, everyKind, recurrenceLabel } from '../lib/recurrence';
+import { predictProjects, splitLines } from '../lib/taskPredict';
 import {
   createTask, updateTask, reopenTask,
   approveTask, returnTask, addComment, subscribeComments,
 } from '../lib/db';
 
-function TagEditor({ value, onChange, placeholder, kind, suggestions = [] }) {
+function TagEditor({ value, onChange, placeholder, kind, suggestions = [], predicted = [] }) {
   const [text, setText] = useState('');
   const add = (raw) => {
     const v = (raw ?? text).trim().replace(/^#/, '');
     if (v && !value.includes(v)) onChange([...value, v]);
     setText('');
   };
-  const avail = suggestions.filter((s) => !value.includes(s));
+  const guess = predicted.filter((s) => !value.includes(s));
+  const avail = suggestions.filter((s) => !value.includes(s) && !guess.includes(s));
   return (
     <div>
       <div className="chips" style={{ marginBottom: value.length ? 8 : 0 }}>
@@ -36,6 +39,16 @@ function TagEditor({ value, onChange, placeholder, kind, suggestions = [] }) {
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
         onBlur={() => add()}
       />
+      {guess.length > 0 && (
+        <div className="chips" style={{ marginTop: 8 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}><i className="fa-solid fa-wand-magic-sparkles" /> подходит:</span>
+          {guess.map((s) => (
+            <button type="button" key={s} className={`chip ${kind} guess`} onClick={() => add(s)}>
+              {kind === 'project' ? s : '#' + s} +
+            </button>
+          ))}
+        </div>
+      )}
       {avail.length > 0 && (
         <div className="chips" style={{ marginTop: 8 }}>
           <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>есть:</span>
@@ -87,7 +100,9 @@ function ChecklistEditor({ items, onChange }) {
   );
 }
 
-export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions = [], tagSuggestions = [] }) {
+const REC_PRESETS = ['none', 'daily', 'weekly', 'biweekly', 'monthly'];
+
+export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions = [], tagSuggestions = [], tasks = [] }) {
   const editing = !!task;
   const [f, setF] = useState(() => ({
     title: task?.title || '',
@@ -112,7 +127,7 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
   // но раскрываем сразу, если в задаче они уже заполнены.
   const [more, setMore] = useState(() => Boolean(task) && Boolean(
     (task.priorityMatrix?.importance ?? 0) !== 0 || (task.priorityMatrix?.urgency ?? 0) !== 0 ||
-    task.estimateMin != null || task.actualMin != null || task.tags?.length || task.projectTags?.length ||
+    task.estimateMin != null || task.actualMin != null || task.tags?.length ||
     task.link || task.checklist?.length || task.needsReview));
 
   const [comments, setComments] = useState([]);
@@ -121,6 +136,17 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
     if (!editing) return;
     return subscribeComments(task.id, setComments);
   }, [editing, task?.id]);
+
+  // новая задача: каждая строка названия — отдельная задача с общими параметрами
+  const titles = editing ? [f.title] : splitLines(f.title);
+  const many = !editing && titles.length > 1;
+  // угадываем проект по названию (пока сам не выбрал)
+  const predicted = useMemo(
+    () => (f.projectTags.length ? [] : predictProjects(f.title, tasks, projectSuggestions)),
+    [f.title, f.projectTags.length, tasks, projectSuggestions],
+  );
+  const ev = parseEvery(f.recurrence);
+  const [customRec, setCustomRec] = useState(!!ev);
 
   const payload = useMemo(() => ({
     title: f.title,
@@ -161,8 +187,10 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
         tags: payload.tags, projectTags: payload.projectTags, link: payload.link,
         checklist: payload.checklist, needsReview: payload.needsReview, recurrence: payload.recurrence,
       }));
+    } else if (many) {
+      act(Promise.all(titles.map((title) => createTask({ ...payload, title }))));
     } else {
-      act(createTask(payload));
+      act(createTask({ ...payload, title: titles[0] || f.title }));
     }
     } catch (e) {
       reportError(e, 'Не сохранилось');
@@ -180,13 +208,25 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
       onClose={onClose}
       footer={<>
         <button className="btn" onClick={onClose}>Отмена</button>
-        <button className="btn btn-accent" onClick={save} disabled={busy}>{editing ? 'Сохранить' : 'Создать'}</button>
+        <button className="btn btn-accent" onClick={save} disabled={busy}>{editing ? 'Сохранить' : many ? `Создать ${titles.length}` : 'Создать'}</button>
       </>}
     >
 
         <div className="field">
-          <label>Название</label>
-          <input className="input" value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="Что нужно сделать" />
+          <label>{many ? `Задачи списком · ${titles.length}` : 'Название'}</label>
+          {editing ? (
+            <input className="input" value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="Что нужно сделать" />
+          ) : (
+            <textarea className="input title-input" rows={Math.min(8, Math.max(1, f.title.split('\n').length))} value={f.title} autoFocus
+              onChange={(e) => set('title', e.target.value)} placeholder="Что нужно сделать (несколько — каждую с новой строки)" />
+          )}
+          {many && <div className="hint">Каждая строка станет отдельной задачей — с одинаковыми исполнителем, сроком, проектом и повтором.</div>}
+        </div>
+
+        <div className="field">
+          <label>Проект / категория</label>
+          <TagEditor value={f.projectTags} onChange={(v) => set('projectTags', v)} placeholder="Новый проект + Enter" kind="project"
+            suggestions={projectSuggestions} predicted={predicted} />
         </div>
 
         <div className="field">
@@ -218,14 +258,27 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
 
         <div className="field">
           <label>Повтор</label>
-          <select className="input" value={f.recurrence} onChange={(e) => set('recurrence', e.target.value)}>
-            <option value="none">Без повтора</option>
-            <option value="daily">Каждый день</option>
-            <option value="weekly">Каждую неделю</option>
-            <option value="biweekly">Раз в две недели</option>
-            <option value="monthly">Каждый месяц</option>
+          <select className="input" value={customRec ? 'custom' : f.recurrence} onChange={(e) => {
+            const v = e.target.value;
+            if (v === 'custom') { setCustomRec(true); if (!ev) set('recurrence', everyKind(3, 'd')); }
+            else { setCustomRec(false); set('recurrence', v); }
+          }}>
+            {REC_PRESETS.map((k) => <option key={k} value={k}>{recurrenceLabel(k)}</option>)}
+            <option value="custom">Свой интервал…</option>
           </select>
-          {f.recurrence !== 'none' && <div className="hint">Когда отметишь выполненной — сама появится следующая такая же.</div>}
+          {customRec && ev && (
+            <div className="row every-row">
+              <span>Раз в</span>
+              <input className="input" type="number" min="1" max="365" inputMode="numeric" value={ev.n}
+                onChange={(e) => set('recurrence', everyKind(e.target.value, ev.unit))} />
+              <select className="input" value={ev.unit} onChange={(e) => set('recurrence', everyKind(ev.n, e.target.value))}>
+                <option value="d">дней</option>
+                <option value="w">недель</option>
+                <option value="m">месяцев</option>
+              </select>
+            </div>
+          )}
+          {f.recurrence !== 'none' && <div className="hint">{customRec ? recurrenceLabel(f.recurrence) + '. ' : ''}Когда отметишь выполненной — сама появится следующая такая же.</div>}
         </div>
 
         <button type="button" className="more-toggle" onClick={() => setMore((v) => !v)} aria-expanded={!!more}>
@@ -261,10 +314,6 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
           </div>
         </div>
 
-        <div className="field">
-          <label>Проекты</label>
-          <TagEditor value={f.projectTags} onChange={(v) => set('projectTags', v)} placeholder="Проект + Enter" kind="project" suggestions={projectSuggestions} />
-        </div>
         <div className="field">
           <label>Теги</label>
           <TagEditor value={f.tags} onChange={(v) => set('tags', v)} placeholder="Тег + Enter" kind="tag" suggestions={tagSuggestions} />

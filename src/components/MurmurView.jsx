@@ -158,7 +158,7 @@ export function MurmurView({ items: liveItems, me, users, userOf }) {
       {rate && <RateSheet item={rate} me={me} K={K} onClose={() => setRate(null)} />}
       {edit && <EditSheet item={edit} me={me} onClose={() => setEdit(null)} />}
       {epsId && items.find((x) => x.id === epsId) && (
-        <EpisodesSheet item={items.find((x) => x.id === epsId)} K={K} onClose={() => setEpsId(null)}
+        <EpisodesSheet item={items.find((x) => x.id === epsId)} me={me} K={K} onClose={() => setEpsId(null)}
           onRate={() => { setRate(items.find((x) => x.id === epsId)); setEpsId(null); }} />
       )}
       {pick && (
@@ -215,18 +215,23 @@ function MurmurCard({ item, me, partner, userOf, K, onRate, onEdit, onEpisodes }
             <span className="hint" style={{ margin: 0 }}>{wanted.length > 1 ? 'хотят оба' : 'хочет'}</span>
           </span>
           <span className="spacer" />
-          {isSeries && <EpisodesButton onClick={onEpisodes} />}
-          {isGame && !item.startedAt && (
+          {/* у сериала одна кнопка — «Серии»; «Посмотрели» и «Я тоже» внутри */}
+          {isSeries && <EpisodesButton onClick={onEpisodes} primary />}
+          {!isSeries && isGame && !item.startedAt && (
             <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); startMurmur(item.id, me.uid).catch(reportError); }}>
               <i className="fa-solid fa-play" /> Начали
             </button>
           )}
-          <button className={`btn btn-sm ${iWant ? '' : 'btn-ghost'}`} onClick={(e) => { e.stopPropagation(); toggleMurmurWant(item, me.uid); }}>
-            {iWant ? <><i className="fa-solid fa-heart" /> Хочу</> : <><i className="fa-regular fa-heart" /> Я тоже</>}
-          </button>
-          <button className="btn btn-sm btn-accent" onClick={(e) => { e.stopPropagation(); onRate(); }}>
-            <i className="fa-solid fa-check" /> {K.doneVerb}
-          </button>
+          {!isSeries && (
+            <button className={`btn btn-sm ${iWant ? '' : 'btn-ghost'}`} onClick={(e) => { e.stopPropagation(); toggleMurmurWant(item, me.uid); }}>
+              {iWant ? <><i className="fa-solid fa-heart" /> Хочу</> : <><i className="fa-regular fa-heart" /> Я тоже</>}
+            </button>
+          )}
+          {!isSeries && (
+            <button className="btn btn-sm btn-accent" onClick={(e) => { e.stopPropagation(); onRate(); }}>
+              <i className="fa-solid fa-check" /> {K.doneVerb}
+            </button>
+          )}
         </div>
       ) : (
         <div className="task-foot">
@@ -400,16 +405,18 @@ function SeriesProgress({ prog }) {
   );
 }
 
-function EpisodesButton({ onClick }) {
+function EpisodesButton({ onClick, primary }) {
   return (
-    <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); onClick(); }}>
+    <button className={`btn btn-sm ${primary ? 'btn-accent' : 'btn-ghost'}`} onClick={(e) => { e.stopPropagation(); onClick(); }}>
       <i className="fa-solid fa-list-ol" /> Серии
     </button>
   );
 }
 
 // Сетка сезонов → серий. Отметки общие на двоих; оценка и отзыв — на весь сериал.
-function EpisodesSheet({ item, K, onClose, onRate }) {
+function EpisodesSheet({ item, me, K, onClose, onRate }) {
+  const done = item.status === 'done';
+  const iWant = (item.wantedBy || []).includes(me.uid);
   const prog = seriesProgress(item);
   const [upTo, setUpTo] = useState(false); // режим «отметить всё до этой серии»
   const [busy, setBusy] = useState(false);
@@ -444,6 +451,16 @@ function EpisodesSheet({ item, K, onClose, onRate }) {
     setMurmurSeasonWatched(item, s, toggleEpisode(watchedIn(item, s), e)).catch((x) => reportError(x));
   };
 
+  // «Посмотрели» и «Я тоже» живут здесь, а не на карточке
+  const actions = !done && (
+    <div className="row eps-actions">
+      <button type="button" className={`btn ${iWant ? '' : 'btn-ghost'}`} onClick={() => toggleMurmurWant(item, me.uid).catch(reportError)}>
+        {iWant ? <><i className="fa-solid fa-heart" /> Хочу</> : <><i className="fa-regular fa-heart" /> Я тоже</>}
+      </button>
+      <button type="button" className="btn" onClick={onRate}><i className="fa-solid fa-check" /> {K.doneVerb} целиком</button>
+    </div>
+  );
+
   const footer = prog?.complete && item.status !== 'done'
     ? <><button className="btn" onClick={onClose}>Закрыть</button><button className="btn btn-accent" onClick={onRate}><i className="fa-solid fa-star" /> Оценить</button></>
     : prog?.next
@@ -460,6 +477,7 @@ function EpisodesSheet({ item, K, onClose, onRate }) {
             : <button className="btn btn-accent" onClick={search}><i className="fa-solid fa-magnifying-glass" /> Подтянуть сезоны</button>}
           {found && <div style={{ marginTop: 12 }}><MediaResults found={found} onPick={pickFound} hint="Какой это сериал?" /></div>}
           {err && <p className="hint">{err}</p>}
+          {actions}
         </div>
       ) : (
         <>
@@ -504,6 +522,7 @@ function EpisodesSheet({ item, K, onClose, onRate }) {
             </button>
           )}
           {err && <p className="hint">{err}</p>}
+          {actions}
         </>
       )}
     </Sheet>

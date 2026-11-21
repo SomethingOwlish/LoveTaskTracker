@@ -3,11 +3,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Sheet, Seg } from './Sheet';
 import { reportError } from '../lib/toast';
 import {
-  saveRecurring, deleteRecurring, deleteTx, subscribeTxRange, totals, catIcon,
+  saveRecurring, deleteRecurring, deleteTx, subscribeTxRange, totals, catIcon, lastPeriods, inPeriod,
   EXPENSE_CATS, INCOME_CATS, FEE_CATEGORIES, POCKET_CATS,
 } from '../lib/budget';
 import { CURRENCIES, CURRENCY_CODES, fmtCur, curOf } from '../lib/currency';
-import { parseMoney, dayKey, fromDayKey, fmtDate, monthTitle } from '../lib/util';
+import { parseMoney, dayKey, fromDayKey, fmtDate } from '../lib/util';
 
 const EVERY = { month: 'каждый месяц', week: 'каждую неделю' };
 
@@ -143,7 +143,7 @@ export function LimitsSheet({ ctx, onClose, save, cats }) {
         <Seg value={base} onChange={setBase} options={CURRENCY_CODES.map((c) => [c, `${CURRENCIES[c].symbol} ${c}`])} />
         <div className="hint">В ней считаются «Всего», «Пришло/Ушло», лимиты и графики. Кошельки остаются в своих валютах.</div>
       </div>
-      <div className="section-title">Лимит на месяц, {CURRENCIES[base].symbol}</div>
+      <div className="section-title">Лимит на бюджетный месяц, {CURRENCIES[base].symbol}</div>
       {ordered.map((c) => (
         <div key={c} className="limit-row">
           <span className="cat-name"><i className={catIcon(c, 'expense')} /> {c}</span>
@@ -155,32 +155,30 @@ export function LimitsSheet({ ctx, onClose, save, cats }) {
 }
 
 /* ---------- График по месяцам ---------- */
+// Последние 6 бюджетных месяцев (от зарплаты до зарплаты; до первой — календарные)
 export function MonthsChart({ ctx }) {
-  const months = useMemo(() => Array.from({ length: 6 }, (_, i) => {
-    const d = new Date(); d.setDate(1); d.setHours(12); d.setMonth(d.getMonth() - 5 + i); return d;
-  }), []);
+  const startsKey = (ctx.starts || []).map((d) => d.getTime()).join(',');
+  const periods = useMemo(() => lastPeriods(6, ctx.starts || []), [startsKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const [list, setList] = useState(null);
   // полгода операций читаем только по явной кнопке
-  useEffect(() => {
-    const from = new Date(months[0].getFullYear(), months[0].getMonth(), 1);
-    const to = new Date(months[5].getFullYear(), months[5].getMonth() + 1, 1);
-    return subscribeTxRange(from, to, setList);
-  }, [months]);
+  const fromMs = periods[0].from.getTime();
+  useEffect(() => subscribeTxRange(new Date(fromMs), null, setList), [fromMs]);
   if (!list) return <p className="hint"><i className="fa-solid fa-spinner fa-spin" /> Загружаю…</p>;
-  const rows = months.map((m) => ({
-    m,
-    ...totals(list.filter((t) => { const d = t.date?.toDate?.(); return d && d.getMonth() === m.getMonth() && d.getFullYear() === m.getFullYear(); }), ctx.base, ctx.fx),
+  const label = (p) => (p.salary ? fmtDate(p.from).replace(/ (\S{3})\S*$/, ' $1') : p.from.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', ''));
+  const rows = periods.map((p) => ({
+    m: p.from, title: label(p),
+    ...totals(list.filter((t) => !t.planned && inPeriod(t, p)), ctx.base, ctx.fx),
   }));
   const max = Math.max(1, ...rows.map((r) => Math.max(r.income, r.expense)));
   return (
     <div className="months-chart">
       {rows.map((r) => (
-        <div key={r.m.toISOString()} className="mc-col" title={`${monthTitle(r.m)}: +${fmtCur(r.income, ctx.base)} / −${fmtCur(r.expense, ctx.base)}`}>
+        <div key={r.m.toISOString()} className="mc-col" title={`с ${fmtDate(r.m)}: +${fmtCur(r.income, ctx.base)} / −${fmtCur(r.expense, ctx.base)}`}>
           <div className="mc-bars">
             <span className="mc-bar inc" style={{ height: `${(r.income / max) * 100}%` }} />
             <span className="mc-bar exp" style={{ height: `${(r.expense / max) * 100}%` }} />
           </div>
-          <div className="mc-label">{monthTitle(r.m).slice(0, 3)}</div>
+          <div className="mc-label">{r.title}</div>
           <div className="mc-net">{r.income - r.expense >= 0 ? '+' : '−'}{fmtShort(Math.abs(r.income - r.expense))}</div>
         </div>
       ))}

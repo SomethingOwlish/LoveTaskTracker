@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { Avatar } from './Avatar';
 import { toDate, fmtDate, quadrant, isClosed, startOfToday, isSameDay } from '../lib/util';
-import { RECURRENCE_LABEL } from '../lib/recurrence';
-import { reopenTask, toggleLike } from '../lib/db';
+import { recurrenceLabel } from '../lib/recurrence';
+import { reopenTask, toggleLike, updateTask } from '../lib/db';
 import { completeWithUndo, deleteWithUndo } from '../lib/actions';
 import { useSwipe, TRIGGER } from '../lib/useSwipe';
 import { reportError } from '../lib/toast';
@@ -17,6 +18,17 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact
   const checkTotal = (task.checklist || []).length;
   const checkDone = (task.checklist || []).filter((c) => c.done).length;
   const allDone = checkTotal > 0 && checkDone === checkTotal;
+  // задача с чеклистом по нажатию раскрывает пункты — их можно отмечать
+  // прямо тут, не открывая редактирование
+  const [showList, setShowList] = useState(false);
+  const toggleItem = (id) => {
+    const next = (task.checklist || []).map((c) => (c.id === id ? { ...c, done: !c.done } : c));
+    updateTask(task.id, { checklist: next }).catch((e) => reportError(e, 'Не сохранилось'));
+  };
+  const onCardClick = () => {
+    if (checkTotal > 0) setShowList((v) => !v);
+    else onOpen(task);
+  };
 
   // цвет левой полоски: по первому проекту из настроек смотрящего, иначе акцент
   const proj = (task.projectTags || [])[0];
@@ -51,7 +63,7 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact
     <div className={`task ${closed ? 'done' : ''} ${compact ? 'compact' : ''} ${dx ? 'dragging' : ''}`}
       style={{ borderLeftColor: stripe, transform: dx ? `translateX(${dx}px)` : undefined }}
       {...handlers}
-      onClick={() => onOpen(task)}>
+      onClick={onCardClick}>
       <div className="task-top">
         <button
           className={`check ${closed ? 'on' : ''}`}
@@ -79,15 +91,29 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact
           <Avatar email={assignee?.email} avatar={assignee?.avatar} /> {assignee?.name || '—'}
         </span>
         {dl && <span className={overdue ? 'overdue' : ''}><i className="fa-regular fa-clock" /> {dlLabel}</span>}
-        {repeats && <span title={RECURRENCE_LABEL[task.recurrence]}><i className="fa-solid fa-rotate" /> {RECURRENCE_LABEL[task.recurrence].toLowerCase()}</span>}
+        {repeats && <span title={recurrenceLabel(task.recurrence)}><i className="fa-solid fa-rotate" /> {recurrenceLabel(task.recurrence).toLowerCase()}</span>}
         {!compact && <span>{q.label}</span>}
         {checkTotal > 0 && (
-          <span className="chip tag" style={allDone ? { color: 'var(--good)', borderColor: 'color-mix(in srgb, var(--good) 60%, transparent)' } : undefined}>
-            ☑ {checkDone}/{checkTotal}
+          <span className="chip tag cl-toggle" style={allDone ? { color: 'var(--good)', borderColor: 'color-mix(in srgb, var(--good) 60%, transparent)' } : undefined}>
+            ☑ {checkDone}/{checkTotal} <i className={`fa-solid fa-chevron-${showList ? 'up' : 'down'}`} style={{ fontSize: 9 }} />
           </span>
         )}
         {task.link && <span><i className="fa-solid fa-link" /></span>}
       </div>
+
+      {showList && checkTotal > 0 && (
+        <div className="task-checklist" onClick={(e) => e.stopPropagation()}>
+          {task.checklist.map((c) => (
+            <button key={c.id} type="button" className={`cl-item ${c.done ? 'done' : ''}`} onClick={() => toggleItem(c.id)}>
+              <span className={`check ${c.done ? 'on' : ''}`}>{c.done ? '✓' : ''}</span>
+              <span>{c.text}</span>
+            </button>
+          ))}
+          <button type="button" className="btn btn-sm btn-ghost cl-edit" onClick={() => onOpen(task)}>
+            <i className="fa-solid fa-pen" /> Открыть задачу
+          </button>
+        </div>
+      )}
 
       {!compact && <div className="task-foot">
         <span className="who" style={{ fontSize: 11, color: 'var(--text-dim)' }}>

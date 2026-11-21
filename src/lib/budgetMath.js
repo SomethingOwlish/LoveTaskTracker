@@ -178,3 +178,75 @@ export function nextOccurrence(key, every, day) {
   const ny = m === 12 ? y + 1 : y;
   return `${ny}-${pad(nm)}-${pad(Math.min(want, last))}`;
 }
+
+/* ---------- Бюджетный месяц: от зарплаты Совы до следующей ----------
+   starts — даты зарплат с галочкой «новый месяц» (проведённые). Период —
+   [from, to): from — начало дня зарплаты, to — начало дня следующей зарплаты,
+   у текущего to = null (следующей ещё не было). До первой такой зарплаты
+   периоды — обычные календарные месяцы (последний обрезается зарплатой). */
+const sod = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+export function salaryStarts(list) {
+  const ms = new Set();
+  list.forEach((x) => { const d = x instanceof Date ? x : toDate(x?.date ?? x); if (d && !x?.planned) ms.add(sod(d).getTime()); });
+  return [...ms].sort((a, b) => a - b).map((x) => new Date(x));
+}
+
+export function periodOf(date, starts = []) {
+  const t = date.getTime();
+  let i = -1;
+  starts.forEach((s, k) => { if (s.getTime() <= t) i = k; });
+  if (i >= 0) return { from: starts[i], to: starts[i + 1] || null, salary: true };
+  const from = new Date(date.getFullYear(), date.getMonth(), 1);
+  let to = new Date(date.getFullYear(), date.getMonth() + 1, 1);
+  if (starts[0] && starts[0] < to) to = starts[0];
+  return { from, to, salary: false };
+}
+
+// Для плана у открытого периода нужен конец — тот же день следующего месяца.
+export function periodEnd(p) {
+  if (p.to) return p.to;
+  const f = p.from;
+  const last = new Date(f.getFullYear(), f.getMonth() + 2, 0).getDate();
+  return new Date(f.getFullYear(), f.getMonth() + 1, Math.min(f.getDate(), last));
+}
+
+// Проведённая операция — в периоде, если с from и до следующей зарплаты;
+// запланированная — до ожидаемого конца периода.
+export function inPeriod(t, p) {
+  const d = toDate(t.date);
+  if (!d || d < p.from) return false;
+  const end = t.planned ? periodEnd(p) : p.to;
+  return !end || d < end;
+}
+
+export const prevPeriod = (p, starts) => periodOf(new Date(p.from.getTime() - 1), starts);
+export const nextPeriod = (p, starts) => (p.to ? periodOf(p.to, starts) : null);
+
+// Последние n периодов, заканчивая тем, где сейчас now (старые — первыми)
+export function lastPeriods(n, starts, now = new Date()) {
+  const out = [periodOf(now, starts)];
+  while (out.length < n) out.unshift(prevPeriod(out[0], starts));
+  return out;
+}
+
+/* ---------- План по категориям ----------
+   Запланированный расход — это «конверт» на категорию: обычные траты в той же
+   категории за период вычитаются из него. Несколько планов одной категории
+   расходуются по очереди (по дате). Всё — в основной валюте.
+   Возвращает { [id]: { plan, spent, left } }. */
+export function planProgress(planned, actual, base = DEFAULT_BASE, fx = null) {
+  const pool = {};
+  byCategory(actual.filter((t) => !t.planned), base, fx).forEach((c) => { pool[c.cat] = c.sum; });
+  const res = {};
+  [...planned]
+    .filter((t) => t.planned && t.type === 'expense')
+    .sort((a, b) => (toDate(a.date) || 0) - (toDate(b.date) || 0))
+    .forEach((t) => {
+      const plan = r2(toBase(num(t.amount), t, base, fx));
+      const use = Math.min(plan, pool[t.category] || 0);
+      if (use > 0) pool[t.category] = r2(pool[t.category] - use);
+      res[t.id] = { plan, spent: r2(use), left: r2(plan - use) };
+    });
+  return res;
+}
