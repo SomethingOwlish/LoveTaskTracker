@@ -54,3 +54,54 @@ describe('план по категориям', () => {
     expect(planProgress([plan('a', 1000, 25)], [spend(5000)], 'RSD').a).toEqual({ plan: 1000, spent: 1000, left: 0 });
   });
 });
+
+import { spendBy, whoseOf, dailyAllowance, guessCategory } from '../src/lib/budgetMath';
+import { nextRecurrence, recurrenceLabel } from '../src/lib/recurrence';
+import { wantOrder, isStarted } from '../src/lib/murmurUtil';
+
+describe('чья трата', () => {
+  const owl = 'owl@x'; const goose = 'goose@x';
+  const pockets = { 'Карманные Совы': owl };
+  const e = (o) => ({ type: 'expense', planned: false, currency: 'RSD', items: [], authorUid: goose, ...o });
+  it('продукты и коммуналка — всегда общие, карманные — владельца', () => {
+    expect(whoseOf(e({ category: 'Продукты', forUid: owl }))).toBeNull();
+    expect(whoseOf(e({ category: 'Карманные Совы' }), null, pockets)).toBe(owl);
+    expect(whoseOf(e({ category: 'Кафе', forUid: owl }))).toBe(owl);
+    expect(whoseOf(e({ category: 'Кафе', forUid: null }))).toBeNull();
+    expect(whoseOf(e({ category: 'Кафе' }))).toBe(goose); // старая — кто внёс
+  });
+  it('раскладка с позициями чека', () => {
+    const t = e({ category: 'Одежда', forUid: owl, amount: 1000, items: [{ amount: 300, category: 'Продукты' }] });
+    expect(spendBy([t], 'RSD')).toEqual({ common: 300, [owl]: 700 });
+  });
+});
+
+describe('остаток в день и угадывание категории', () => {
+  it('делит на дни до конца периода', () => {
+    const p = { from: new Date(2026, 10, 24), to: null, salary: true };
+    expect(dailyAllowance(1000, p, new Date(2026, 11, 14, 15))).toEqual({ days: 10, perDay: 100 });
+  });
+  it('словарь и выученное', () => {
+    expect(guessCategory('Лидл вечером')).toBe('Продукты');
+    expect(guessCategory('такси домой')).toBe('Транспорт');
+    expect(guessCategory('лидл', { лидл: 'Дом' })).toBe('Дом');
+    expect(guessCategory('что-то')).toBeNull();
+  });
+});
+
+describe('повтор по дням недели', () => {
+  it('пн/ср/пт: с пятницы — на понедельник', () => {
+    expect(nextRecurrence(new Date(2026, 10, 20), 'days:1,3,5')).toEqual(new Date(2026, 10, 23));
+    expect(recurrenceLabel('days:1,3,5')).toBe('По пн, ср, пт');
+    expect(recurrenceLabel('days:1,2,3,4,5')).toBe('По будням');
+  });
+});
+
+describe('начатые сериалы выше', () => {
+  it('серия отмечена — значит начат', () => {
+    const a = { watched: { s1: [1] }, wantedBy: [1], createdAt: 1 };
+    const b = { wantedBy: [1, 2], createdAt: 2 };
+    expect(isStarted(a)).toBe(true);
+    expect([b, a].sort((x, y) => wantOrder(x, y, (v) => v))[0]).toBe(a);
+  });
+});

@@ -49,4 +49,22 @@ export default {
     }
     return env.ASSETS.fetch(request);
   },
+
+  // Cron каждые 15 минут (wrangler.jsonc → triggers): запускает workflow
+  // рассылки пушей. Своё расписание GitHub срабатывает раз в несколько часов,
+  // поэтому напоминания опаздывали или терялись. Нужен секрет воркера
+  // GH_DISPATCH_TOKEN — fine-grained токен GitHub с правом Actions: write на репозиторий.
+  async scheduled(event, env, ctx) {
+    if (!env.GH_DISPATCH_TOKEN) return;
+    ctx.waitUntil(fetch(`https://api.github.com/repos/${env.GH_REPO || 'SomethingOwlish/LoveTaskTracker'}/actions/workflows/push-reminders.yml/dispatches`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.GH_DISPATCH_TOKEN}`,
+        accept: 'application/vnd.github+json',
+        'user-agent': 'lovetasktracker-cron',
+        'x-github-api-version': '2022-11-28',
+      },
+      body: JSON.stringify({ ref: 'main' }),
+    }).then(async (r) => { if (!r.ok) console.warn('dispatch', r.status, (await r.text()).slice(0, 200)); }));
+  },
 };

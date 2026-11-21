@@ -8,6 +8,14 @@ export function parseEvery(kind) {
   const n = Math.max(1, Math.min(365, Number(m[1])));
   return { n, unit: m[2] };
 }
+// По дням недели: 'days:1,3,5' (0 — воскресенье, как в Date.getDay)
+export function parseDays(kind) {
+  const m = /^days:([0-6](?:,[0-6])*)$/.exec(kind || '');
+  return m ? [...new Set(m[1].split(',').map(Number))].sort() : null;
+}
+export const daysKind = (list) => (list.length ? `days:${[...new Set(list)].sort().join(',')}` : 'none');
+export const DOW_SHORT = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+
 export const everyKind = (n, unit) => `every:${Math.max(1, Math.min(365, Math.round(Number(n)) || 1))}:${unit}`;
 
 function addMonths(d, n) {
@@ -22,6 +30,15 @@ function addMonths(d, n) {
 // Пересчёт следующей даты для повторяющейся задачи.
 export function nextRecurrence(base, kind) {
   const d = new Date(base.getTime());
+  const days = parseDays(kind);
+  if (days) {
+    // ближайший следующий день из списка (не сегодня)
+    for (let i = 0; i < 7; i += 1) {
+      d.setDate(d.getDate() + 1);
+      if (days.includes(d.getDay())) break;
+    }
+    return d;
+  }
   const ev = parseEvery(kind);
   if (ev) {
     if (ev.unit === 'd') d.setDate(d.getDate() + ev.n);
@@ -74,6 +91,15 @@ function plural(n, one, few, many) {
 }
 const UNIT_WORDS = { d: ['день', 'дня', 'дней'], w: ['неделю', 'недели', 'недель'], m: ['месяц', 'месяца', 'месяцев'] };
 export function recurrenceLabel(kind) {
+  const days = parseDays(kind);
+  if (days) {
+    if (days.length === 7) return 'Каждый день';
+    // с понедельника
+    const order = [1, 2, 3, 4, 5, 6, 0].filter((x) => days.includes(x));
+    if (order.join() === '1,2,3,4,5') return 'По будням';
+    if (order.join() === '6,0') return 'По выходным';
+    return 'По ' + order.map((x) => DOW_SHORT[x]).join(', ');
+  }
   const ev = parseEvery(kind);
   if (!ev) return RECURRENCE_LABEL[kind] || RECURRENCE_LABEL.none;
   const w = plural(ev.n, ...UNIT_WORDS[ev.unit]);

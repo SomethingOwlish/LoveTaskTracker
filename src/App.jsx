@@ -79,6 +79,7 @@ export default function App() {
 
   // цвета проектов — у каждого свои (по email), хранятся локально
   const [projectColors, setProjectColors] = useState({});
+  const [clTemplates, setClTemplates] = useState([]); // шаблоны чеклистов (у каждого свои)
   // проекты, задачи из которых дублируются в календарь — тоже у каждого свои
   const [calendarProjects, setCalendarProjectsState] = useState([]);
 
@@ -188,6 +189,7 @@ export default function App() {
       setCalendarProjectsState(Array.isArray(st.calendarProjects) ? st.calendarProjects : []);
       if (st.notifReadAt) setReadAt((p) => Math.max(p, st.notifReadAt));
       setPushPrefs(st.push || null);
+      setClTemplates(Array.isArray(st.checklistTemplates) ? st.checklistTemplates : []);
       if (fromServer) { uiSaved.current = st.ui || null; setUiLoaded(true); }
       // разовый перенос старых локальных настроек в Firestore
       if (fromServer && !migrated) {
@@ -330,7 +332,7 @@ export default function App() {
         <ErrorBoundary key={tab}>
         <Suspense fallback={<div className="empty"><i className="fa-solid fa-spinner fa-spin" /></div>}>
         {tab === 'tasks' && (
-          <TasksView tasks={tasks} me={me} users={users} userOf={userOf} onOpen={setModal} projectColors={projectColors}
+          <TasksView tasks={tasks} me={me} users={users} userOf={userOf} onOpen={setModal} projectColors={projectColors} murmur={murmur}
             moods={moods} moodLegends={moodLegends} initialMode={START_VIEW}
             calendarProjects={calendarProjects} onNew={() => setModal({})} />
         )}
@@ -385,6 +387,8 @@ export default function App() {
           projectSuggestions={projectSuggestions}
           tagSuggestions={tagSuggestions}
           tasks={tasks}
+          checklistTemplates={clTemplates}
+          onSaveTemplates={(list) => { setClTemplates(list); saveUserState(me.uid, { checklistTemplates: list }).catch(() => {}); }}
         />
       )}
     </div>

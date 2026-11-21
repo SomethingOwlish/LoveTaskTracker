@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { reportError } from '../lib/toast';
+import { reportError, toast } from '../lib/toast';
 import { Sheet, Seg, Switch, loadPref, savePref } from './Sheet';
 import { Avatar } from './Avatar';
 import {
@@ -10,13 +10,15 @@ import {
   walletBalances, byCategory, totals, projectTotals, catIcon,
   subscribeBudgetSettings, saveBudgetSettings, subscribeRecurring, materializeRecurring,
   subscribeSalaries, salaryStarts, periodOf, inPeriod, prevPeriod, nextPeriod, planProgress,
+  spendBy, whoseOf, COMMON_CATS, dailyAllowance, guessCategory, noteKey, learnNoteCategory,
+  fetchTxRange, carryPlanned, POCKET_CATS,
   EXPENSE_CATS, INCOME_CATS, WALLET_ICONS, FEE_CATEGORIES,
 } from '../lib/budget';
 import { subscribeRates } from '../lib/fx';
 import { CURRENCIES, CURRENCY_CODES, DEFAULT_BASE, fmtCur, curOf, convert, fxRate, normCode } from '../lib/currency';
 import { convertInput, inputOf } from '../lib/budgetMath';
-import { RecurringList, LimitsSheet, MonthsChart } from './BudgetExtras';
-import { USERS } from '../config';
+import { RecurringList, LimitsSheet, MonthsChart, SummarySheet } from './BudgetExtras';
+import { USERS, ALLOWED_EMAILS } from '../config';
 import { Wishlist } from './Wishlist';
 import { processReceiptPhoto } from '../lib/receipt';
 import { parseMoney, toDate, dayKey, fmtDate, fmtWeekday, isSameDay, uid6 } from '../lib/util';
@@ -35,6 +37,9 @@ const parseRate = (s) => { const v = Number(String(s || '').replace(/[\s\u00a0\u
 let BASE = DEFAULT_BASE;
 const fmtB = (v) => fmtCur(v, BASE);
 const OWL = Object.values(USERS).find((u) => u.avatar === 'owl')?.name || 'Совы';
+// категория карманных → чьи они
+export const POCKET_OWNER = Object.fromEntries(Object.entries(POCKET_CATS).map(([uid, cat]) => [cat, uid]));
+export const PEOPLE = ALLOWED_EMAILS.map((email) => ({ uid: email, email, ...USERS[email] }));
 
 // «25 октября — 23 ноября» / «С 25 ноября» / «Октябрь 2026»
 export function periodTitle(p) {
@@ -103,6 +108,7 @@ export function BudgetView({ me, userOf }) {
   const [showReceipts, setShowReceipts] = useState(false);
   const [projectOpen, setProjectOpen] = useState(null);
   const [limitsOpen, setLimitsOpen] = useState(false);
+  const [summary, setSummary] = useState(null); // период, по которому открыты итоги
 
   const activeWallets = wallets.filter((w) => !w.archived);
   const balances = useMemo(() => walletBalances(wallets), [wallets]);
@@ -118,6 +124,7 @@ export function BudgetView({ me, userOf }) {
     openWallet: setWalletSheet,
     openReceipts: () => setShowReceipts(true),
     openProject: setProjectOpen,
+    openSummary: setSummary,
   };
 
   return (
@@ -134,6 +141,7 @@ export function BudgetView({ me, userOf }) {
       {walletSheet && <WalletSheet ctx={ctx} wallet={walletSheet === 'new' ? null : walletSheet} onClose={() => setWalletSheet(null)} />}
       {showReceipts && <ReceiptsSheet ctx={ctx} onClose={() => setShowReceipts(false)} />}
       {limitsOpen && <LimitsSheet ctx={ctx} onClose={() => setLimitsOpen(false)} save={saveBudgetSettings} cats={EXPENSE_CATS} />}
+      {summary && <SummarySheet ctx={ctx} period={summary} title={periodTitle(summary)} onClose={() => setSummary(null)} />}
       {projectOpen && <ProjectSheet ctx={ctx} project={projectOpen === 'new' ? null : projects.find((p) => p.id === projectOpen.id) || projectOpen} onClose={() => setProjectOpen(null)} />}
       {/* операция — последней, чтобы открываться поверх кошелька/проекта */}
       {txSheet && <TxSheet ctx={ctx} tx={txSheet.tx} initial={txSheet.initial} onClose={() => setTxSheet(null)} />}
@@ -312,6 +320,13 @@ function Overview({ ctx, newReceipts }) {
   const capOf = (c) => limits[c] || planByCat[c] || 0;
   const maxCat = Math.max(1, ...cats.map((c) => Math.max(c.sum, capOf(c.cat))));
   const [chart, setChart] = useState(false);
+  const now = new Date();
+  const isCurrent = ctx.period.from <= now && (!ctx.period.to || ctx.period.to > now);
+  const afterPlan = total + planInc - planExp;
+  const daily = isCurrent ? dailyAllowance(afterPlan, ctx.period, now) : null;
+  const who = spendBy(monthTx, BASE, fx, POCKET_OWNER);
+  // первые дни после зарплаты — напоминаем посмотреть итоги прошлого месяца
+  const justStarted = isCurrent && ctx.period.salary && (now - ctx.period.from) < 4 * 86400000;
 
   return (
     <div>
@@ -320,7 +335,12 @@ function Overview({ ctx, newReceipts }) {
         <div className="n">{multiCur ? '≈ ' : ''}{fmtB(total)}</div>
         {(planExp > 0 || planInc > 0) && (
           <div className="hint" style={{ margin: '4px 0 0' }}>
-            После плана на этот месяц: <b>{fmtB(total + planInc - planExp)}</b>
+            После плана на этот месяц: <b>{fmtB(afterPlan)}</b>
+          </div>
+        )}
+        {daily && (
+          <div className="daily-allow">
+            <b>≈ {fmtB(daily.perDay)}</b> в день · {daily.days} {daily.days === 1 ? 'день' : daily.days < 5 ? 'дня' : 'дней'} до {ctx.period.salary ? 'зарплаты' : 'конца месяца'}
           </div>
         )}
       </div>
@@ -348,6 +368,13 @@ function Overview({ ctx, newReceipts }) {
         </button>
       )}
 
+      {justStarted && (
+        <button type="button" className="banner" onClick={() => ctx.openSummary(prevPeriod(ctx.period, ctx.starts))}>
+          <i className="fa-solid fa-flag-checkered" /> Новый месяц! Итоги прошлого
+          <span className="spacer" /><i className="fa-solid fa-chevron-right" />
+        </button>
+      )}
+
       <MonthNav ctx={ctx} />
       {!ctx.period.salary && <p className="hint" style={{ textAlign: 'center', marginTop: -4 }}>Отметь зарплату {OWL} галочкой «новый месяц» — бюджет пойдёт от зарплаты до зарплаты.</p>}
       <div className="stats money-stats">
@@ -355,6 +382,8 @@ function Overview({ ctx, newReceipts }) {
         <div className="stat"><div className="n neg">{fmtB(expense)}</div><div className="l">Ушло</div></div>
         <div className="stat"><div className="n">{fmtB(planExp)}</div><div className="l">Ещё в плане</div></div>
       </div>
+      <WhoSpent who={who} />
+      <button className="btn btn-sm btn-ghost btn-block" onClick={() => ctx.openSummary(ctx.period)}><i className="fa-solid fa-chart-pie" /> Итоги месяца</button>
 
       <div className="row" style={{ alignItems: 'center' }}>
         <div className="section-title" style={{ margin: '18px 0 10px' }}>Куда ушло</div>
@@ -381,6 +410,28 @@ function Overview({ ctx, newReceipts }) {
         ? <MonthsChart ctx={ctx} />
         : <button className="btn btn-block" onClick={() => setChart(true)}><i className="fa-solid fa-chart-column" /> Показать последние полгода</button>}
       {multiCur && <p className="hint">Сводки — в {CURRENCIES[BASE].label.toLowerCase()}ах по текущему курсу. Основную валюту можно сменить в «Лимитах».</p>}
+    </div>
+  );
+}
+
+// Полоска «кто сколько потратил»: Сова · Гусь · общее
+export function WhoSpent({ who }) {
+  const parts = [...PEOPLE.map((u) => ({ k: u.uid, label: u.name, avatar: u, v: who[u.uid] || 0 })), { k: 'common', label: 'Общее', v: who.common || 0 }];
+  const sum = parts.reduce((s, x) => s + x.v, 0);
+  if (!sum) return null;
+  return (
+    <div className="who-spent">
+      <div className="ws-bar">
+        {parts.map((x) => x.v > 0 && <span key={x.k} className={`ws-${x.avatar?.avatar || 'common'}`} style={{ width: `${(x.v / sum) * 100}%` }} />)}
+      </div>
+      <div className="ws-legend">
+        {parts.map((x) => (
+          <span key={x.k}>
+            {x.avatar ? <Avatar email={x.avatar.email} avatar={x.avatar.avatar} /> : <i className={`fa-solid fa-people-roof ws-ico`} />}
+            {x.label} <b>{fmtB(x.v)}</b>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -443,6 +494,40 @@ function Plan({ ctx }) {
   const { prog, planExp: exp, planInc: inc } = usePlanState(ctx);
   const inThisMonth = planned.filter((t) => inPeriod(t, ctx.period) && !overdue.includes(t)).sort((a, b) => toDate(a.date) - toDate(b.date));
 
+  // Перенос остатков: для каждого просроченного плана читаем траты его периода,
+  // считаем, сколько не истрачено, и двигаем остаток на сегодня.
+  const [carrying, setCarrying] = useState(false);
+  const carry = async () => {
+    setCarrying(true);
+    try {
+      const list = overdue.filter((t) => t.type === 'expense');
+      const groups = new Map();
+      list.forEach((t) => {
+        const p = periodOf(toDate(t.date), ctx.starts);
+        const k = p.from.getTime();
+        if (!groups.has(k)) groups.set(k, { p, items: [] });
+        groups.get(k).items.push(t);
+      });
+      let moved = 0; let closed = 0;
+      for (const { p, items } of groups.values()) {
+        const end = p.to && p.to < now ? p.to : new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const actual = await fetchTxRange(p.from, end);
+        const pr = planProgress(items, actual, BASE, ctx.fx);
+        for (const t of items) {
+          const left = pr[t.id]?.left ?? convert(t.amount, curOf(t, BASE), BASE, ctx.fx);
+          const leftCur = Math.round(convert(left, BASE, curOf(t, BASE), ctx.fx) * 100) / 100;
+          await carryPlanned(t, leftCur, ctx.known);
+          if (leftCur > 0.004) moved += 1; else closed += 1;
+        }
+      }
+      toast([moved && `перенесено: ${moved}`, closed && `закрыто: ${closed}`].filter(Boolean).join(', ') || 'Нечего переносить');
+    } catch (e) {
+      reportError(e, 'Не перенеслось');
+    } finally {
+      setCarrying(false);
+    }
+  };
+
   const row = (t) => {
     const p = prog[t.id];
     const cur = curOf(t, BASE);
@@ -479,7 +564,20 @@ function Plan({ ctx }) {
         <button className="btn btn-accent" onClick={() => ctx.openTx(null, { type: 'expense', planned: true })}><i className="fa-solid fa-calendar-plus" /> Запланировать расход</button>
         <button className="btn" onClick={() => ctx.openTx(null, { type: 'income', planned: true })}><i className="fa-solid fa-plus" /> Ожидаемый доход</button>
       </div>
-      {overdue.length > 0 && <><div className="section-title bad">Срок прошёл · провести или перенести</div>{overdue.map(row)}</>}
+      {overdue.length > 0 && (
+        <>
+          <div className="row" style={{ alignItems: 'center' }}>
+            <div className="section-title bad" style={{ margin: '18px 0 10px' }}>Срок прошёл · провести или перенести</div>
+            {overdue.some((t) => t.type === 'expense') && (
+              <button className="btn btn-sm" style={{ flex: 'none' }} disabled={carrying} onClick={carry}
+                title="Неистраченный остаток плана переедет в этот месяц, исчерпанные закроются">
+                <i className={`fa-solid ${carrying ? 'fa-spinner fa-spin' : 'fa-share'}`} /> Остатки сюда
+              </button>
+            )}
+          </div>
+          {overdue.map(row)}
+        </>
+      )}
       <MonthNav ctx={ctx} />
       <div className="row hint" style={{ margin: '0 0 8px' }}>
         <span>Ждём <Money value={inc} type="income" /></span>
@@ -677,6 +775,20 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
   const [date, setDate] = useState(dayKey(src.date ? (toDate(src.date) || new Date(src.date)) : new Date()));
   const [planned, setPlanned] = useState(!!src.planned);
   const [salary, setSalary] = useState(!!src.salary);
+  // чей расход: uid или '' — общий
+  const [forUid, setForUid] = useState(() => (tx ? whoseOf(tx, null, POCKET_OWNER) || '' : src.forUid ?? ctx.me.uid));
+  const [catTouched, setCatTouched] = useState(!!src.category);
+  const learned = ctx.settings.noteCats || {};
+  const guessed = !catTouched && type !== 'transfer' ? guessCategory(note, learned) : null;
+  // угаданная категория подставляется, пока категорию не выбрали руками
+  useEffect(() => {
+    if (!guessed) return;
+    const list = type === 'income' ? INCOME_CATS : EXPENSE_CATS;
+    if (type === 'income' && !list.some((c) => c.id === guessed)) return;
+    setCategory(guessed);
+  }, [guessed, type]);
+  const pickCat = (c) => { setCategory(c); setCatTouched(true); };
+  const fixedWhose = type === 'expense' && (COMMON_CATS.includes(category) || POCKET_OWNER[category]);
   const [projectId, setProjectId] = useState(src.projectId || null);
   const [receiptId, setReceiptId] = useState(src.receiptId || null);
   const [items, setItems] = useState(() => srcIn.items.map((x) => ({ ...x, amountStr: String(x.amount) })));
@@ -748,7 +860,10 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
       toAmount: crossCur ? toNum : null, toCurrency,
       walletId, toWalletId, category: category || cats[cats.length - 1].id, note: note.trim(),
       date: when, planned, projectId, receiptId, salary: type === 'income' && salary,
+      forUid: type === 'expense' ? (fixedWhose ? whoseOf({}, category, POCKET_OWNER) : forUid || null) : null,
     }, ctx.me.uid, ctx.known).catch((e) => reportError(e, 'Не сохранилось'));
+    // запоминаем «слово из комментария → категория» для угадывания
+    if (catTouched && note.trim() && category) learnNoteCategory(noteKey(note), category);
     onClose();
   };
 
@@ -762,7 +877,7 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
   return (
     <Sheet title={tx ? TYPE_LABEL[type] : planned ? 'В план' : TYPE_LABEL[type]} onClose={onClose}
       footer={<><button className="btn" onClick={onClose}>Отмена</button><button className="btn btn-accent" disabled={!canSave} onClick={save}>{tx ? 'Сохранить' : 'Добавить'}</button></>}>
-      <Seg value={type} onChange={(t) => { setType(t); setCategory(''); }} className="mb"
+      <Seg value={type} onChange={(t) => { setType(t); setCategory(''); setCatTouched(false); }} className="mb"
         options={[['expense', 'Расход'], ['income', 'Доход'], ['transfer', 'Перевод']]} />
 
       <div className="field">
@@ -858,29 +973,41 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
         )}
       </div>
 
+      <div className="field"><label>Комментарий</label><input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder={type === 'expense' ? 'Что купили — категория угадается' : ''} /></div>
+
       {type !== 'transfer' && (
         <div className="field">
           <label>Категория</label>
           <div className="chips">
             {cats.map((c) => (
-              <button key={c.id} type="button" className={`chip pick ${category === c.id ? 'on' : ''}`} onClick={() => setCategory(c.id)}>
+              <button key={c.id} type="button" className={`chip pick ${category === c.id ? 'on' : ''}`} onClick={() => pickCat(c.id)}>
                 <i className={c.icon} /> {c.id}
               </button>
             ))}
             {usedCats.map((c) => (
-              <button key={c} type="button" className={`chip pick ${category === c ? 'on' : ''}`} onClick={() => setCategory(c)}>{c}</button>
+              <button key={c} type="button" className={`chip pick ${category === c ? 'on' : ''}`} onClick={() => pickCat(c)}>{c}</button>
             ))}
             <button type="button" className="chip pick" onClick={() => setCustomCat(true)}>+ своя</button>
           </div>
           {customCat && (
             <input className="input" style={{ marginTop: 8 }} autoFocus placeholder="Название категории"
-              onKeyDown={(e) => { if (e.key === 'Enter') { setCategory(e.target.value.trim()); setCustomCat(false); } }}
-              onBlur={(e) => { if (e.target.value.trim()) setCategory(e.target.value.trim()); setCustomCat(false); }} />
+              onKeyDown={(e) => { if (e.key === 'Enter') { pickCat(e.target.value.trim()); setCustomCat(false); } }}
+              onBlur={(e) => { if (e.target.value.trim()) pickCat(e.target.value.trim()); setCustomCat(false); }} />
           )}
+          {guessed && category === guessed && <div className="hint"><i className="fa-solid fa-wand-magic-sparkles" /> угадано по комментарию</div>}
         </div>
       )}
 
-      <div className="field"><label>Комментарий</label><input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder={type === 'expense' ? 'Что купили' : ''} /></div>
+      {type === 'expense' && (
+        <div className="field">
+          <label>Чья трата</label>
+          {fixedWhose
+            ? <div className="hint" style={{ margin: 0 }}>{COMMON_CATS.includes(category) ? `«${category}» — всегда общее` : `Карманные — трата ${ctx.userOf(POCKET_OWNER[category])?.name || ''}`}</div>
+            : <Seg value={forUid} onChange={setForUid} className="seg-sm"
+              options={[...PEOPLE.map((u) => [u.uid, u.uid === ctx.me.uid ? `Моя` : u.name]), ['', 'Общая']]} />}
+        </div>
+      )}
+
 
       <div className="row">
         <div className="field">

@@ -250,3 +250,74 @@ export function planProgress(planned, actual, base = DEFAULT_BASE, fx = null) {
     });
   return res;
 }
+
+/* ---------- Чья трата ----------
+   У расхода поле forUid: чей он (uid = e-mail), null — общий. Продукты и
+   коммуналка — всегда общие, карманные — всегда того, чьи карманные.
+   У старых операций без поля — того, кто внёс. */
+export const COMMON_CATS = ['Продукты', 'Коммуналка'];
+
+export function whoseOf(t, category, pocketOwner = {}) {
+  const cat = category || t.category;
+  if (COMMON_CATS.includes(cat)) return null;
+  if (pocketOwner[cat]) return pocketOwner[cat];
+  if (t.forUid !== undefined) return t.forUid || null;
+  return t.authorUid || null;
+}
+
+// Расходы по людям в основной валюте: { common, [uid]: сумма }
+export function spendBy(txs, base = DEFAULT_BASE, fx = null, pocketOwner = {}) {
+  const m = { common: 0 };
+  const add = (who, v) => { const k = who || 'common'; m[k] = (m[k] || 0) + v; };
+  txs.forEach((t) => {
+    if (t.planned) return;
+    const fee = num(t.fee);
+    if (fee) add(whoseOf(t, t.category, pocketOwner), toBase(fee, t, base, fx));
+    if (t.type !== 'expense') return;
+    let rest = num(t.amount);
+    (t.items || []).forEach((it) => {
+      add(whoseOf(t, it.category || t.category, pocketOwner), toBase(num(it.amount), t, base, fx));
+      rest -= num(it.amount);
+    });
+    if (rest > 0.004) add(whoseOf(t, t.category, pocketOwner), toBase(rest, t, base, fx));
+  });
+  Object.keys(m).forEach((k) => { m[k] = r2(m[k]); });
+  return m;
+}
+
+/* ---------- Остаток до зарплаты ----------
+   Сколько можно тратить в день: (деньги после плана) / дней до конца периода
+   (включая сегодня). */
+export function dailyAllowance(available, p, now = new Date()) {
+  const end = periodEnd(p);
+  const today = sod(now);
+  const days = Math.max(1, Math.round((end - today) / 86400000));
+  return { days, perDay: r2(Math.max(0, available) / days) };
+}
+
+/* ---------- Угадывание категории по комментарию ---------- */
+export const noteKey = (note) => {
+  const w = (note || '').toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-яčćšđž0-9]+/).find((x) => x.length >= 3);
+  return w ? w.slice(0, 6) : null;
+};
+// магазины и слова, которые почти всегда значат одно и то же
+const NOTE_HINTS = [
+  [/^(maxi|макси|lidl|лидл|idea|идеа|univer|универ|аман|aman|dis|продук|молок|хлеб|овощ|фрукт|мясо|рынок|pijac|пияц)/, 'Продукты'],
+  [/^(кафе|кофе|coffe|ресто|обед|ужин|завтр|пицц|бургер|wolt|glovo|доставк|бар)/, 'Кафе'],
+  [/^(такси|taxi|car:go|cargo|yandex|яндекс|автоб|бензин|топлив|парков|метро|bus)/, 'Транспорт'],
+  [/^(аптек|apotek|врач|доктор|анализ|стомат|лекар|таблет)/, 'Здоровье'],
+  [/^(свет|электр|струј|газ|вода|infost|инфост|квартп|аренд|интер|eps)/, 'Коммуналка'],
+  [/^(телеф|mts|yettel|a1|симк|связь)/, 'Связь'],
+  [/^(корм|ветер|вет|кот|кош|собак)/, 'Питомцы'],
+  [/^(кино|театр|концер|игра|steam|netfl|spotif|подпис)/, 'Развлечения'],
+  [/^(подар)/, 'Подарки'],
+  [/^(одежд|обув|футбол|куртк|zara|h&m)/, 'Одежда'],
+];
+// learned — { ключ: категория } из прошлых операций; приоритетнее словаря
+export function guessCategory(note, learned = {}) {
+  const k = noteKey(note);
+  if (!k) return null;
+  if (learned[k]) return learned[k];
+  const hit = NOTE_HINTS.find(([re]) => re.test(k));
+  return hit ? hit[1] : null;
+}

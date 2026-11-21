@@ -5,6 +5,7 @@ import { MatrixView } from './MatrixView';
 import { Avatar } from './Avatar';
 import { Seg, loadPref, savePref } from './Sheet';
 import { MoodTodayWidget } from './Mood';
+import { WatchingWidget } from './MurmurView';
 import { isActive, isClosed, projectsOf, toDate, startOfToday, endOfToday, fmtDate, fmtWeekday } from '../lib/util';
 import { createTask, subscribeClosedTasks } from '../lib/db';
 
@@ -12,7 +13,7 @@ import { createTask, subscribeClosedTasks } from '../lib/db';
 const CalendarView = lazy(() => import('./CalendarView').then((m) => ({ default: m.CalendarView })));
 const MODES = ['today', 'list', 'matrix', 'calendar'];
 
-export function TasksView({ tasks, me, users, userOf, onOpen, onNew, projectColors, moods, moodLegends, initialMode, calendarProjects }) {
+export function TasksView({ tasks, me, users, userOf, onOpen, onNew, projectColors, moods, moodLegends, initialMode, calendarProjects, murmur = [] }) {
   const [mode, setModeState] = useState(() => {
     if (MODES.includes(initialMode)) return initialMode;
     const saved = loadPref('tasksMode', 'today');
@@ -36,7 +37,7 @@ export function TasksView({ tasks, me, users, userOf, onOpen, onNew, projectColo
 
       {mode === 'today' && (
         <TodayList tasks={tasks} me={me} partner={partner} userOf={userOf} onOpen={onOpen}
-          projectColors={projectColors} moods={moods} moodLegends={moodLegends} />
+          projectColors={projectColors} moods={moods} moodLegends={moodLegends} murmur={murmur} />
       )}
       {mode === 'list' && (
         <AllList tasks={tasks} me={me} userOf={userOf} onOpen={onOpen} projectColors={projectColors} />
@@ -115,7 +116,7 @@ function QuickAdd({ me, partner, deadline }) {
 }
 
 /* ---------- Сегодня ---------- */
-function TodayList({ tasks, me, partner, userOf, onOpen, projectColors, moods, moodLegends }) {
+function TodayList({ tasks, me, partner, userOf, onOpen, projectColors, moods, moodLegends, murmur }) {
   const [scope, setScopeState] = useState(() => loadPref('todayScope', 'mine'));
   const setScope = (s) => { setScopeState(s); savePref('todayScope', s); };
   const [showDone, setShowDone] = useState(false);
@@ -165,6 +166,7 @@ function TodayList({ tasks, me, partner, userOf, onOpen, projectColors, moods, m
       )}
 
       <MoodTodayWidget me={me} partner={partner} moods={moods} legends={moodLegends} />
+      <WatchingWidget items={murmur} />
 
       {review.length > 0 && <><div className="section-title warn">Ждут твоей проверки · {review.length}</div>{review.map(card)}</>}
       {overdue.length > 0 && <><div className="section-title bad">Просрочено · {overdue.length}</div>{overdue.map(card)}</>}

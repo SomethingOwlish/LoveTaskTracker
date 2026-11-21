@@ -1,5 +1,6 @@
-// Рассылка push-напоминаний. Запускается GitHub Actions каждые 15 минут
-// (.github/workflows/push-reminders.yml). Читает Firestore сервисным ключом
+// Рассылка push-напоминаний. Запускает workflow .github/workflows/push-reminders.yml:
+// его дёргает воркер Cloudflare каждые 15 минут (cron в wrangler.jsonc), а
+// собственное расписание GitHub — запасное (оно срабатывает нерегулярно). Читает Firestore сервисным ключом
 // (секрет FIREBASE_SERVICE_ACCOUNT) и шлёт Web Push (секрет VAPID_PRIVATE_KEY).
 //
 // Что шлём (каждый настраивает у себя в Профиле → «Уведомления на телефон»):
@@ -24,7 +25,9 @@ if (!SA || !VAPID_PRIVATE || !VAPID_PUBLIC) {
 
 admin.initializeApp({ credential: admin.credential.cert(JSON.parse(SA)) });
 const db = admin.firestore();
-webpush.setVapidDetails('mailto:noreply@lovetasktracker.invalid', VAPID_PUBLIC, VAPID_PRIVATE);
+// subject — настоящий адрес: push-сервис Apple отвечает 403 (BadJwtToken) на
+// выдуманный mailto:…invalid, из-за этого уведомления на iPhone не доходили.
+webpush.setVapidDetails(new URL(APP_URL).origin, VAPID_PUBLIC, VAPID_PRIVATE);
 
 const NAMES = { 'argentummortis@gmail.com': 'Совушка', 'arentakasi@gmail.com': 'Гусик' };
 const DEFAULT_PREFS = { events: true, digest: true, deadlines: true, mood: true, digestTime: '09:00', moodTime: '21:00', tz: 'Europe/Belgrade' };
@@ -33,8 +36,13 @@ const ACTIVE = ['open', 'in_progress', 'returned', 'in_review'];
 const now = Date.now();
 const stateRef = db.doc('pushState/cron');
 const state = (await stateRef.get()).data() || {};
-// окно с прошлого запуска (не больше 2 часов, если Actions долго не запускались)
-const from = Math.max(state.lastRun || now - 15 * 60000, now - 2 * 3600000);
+// Окно с прошлого запуска. GitHub запускает расписание нерегулярно (бывало
+// раз в 6–8 часов), поэтому окно — до суток: события партнёра не теряются.
+const from = Math.max(state.lastRun || now - 15 * 60000, now - 24 * 3600000);
+// что уже отправлено: { digest: {uid: 'YYYY-MM-DD'}, mood: {...}, dl: {taskId: срок} }
+const sentDigest = { ...(state.sentDigest || {}) };
+const sentMood = { ...(state.sentMood || {}) };
+const sentDl = Object.fromEntries(Object.entries(state.sentDl || {}).filter(([, ms]) => ms > now - 86400000));
 const ts = (ms) => admin.firestore.Timestamp.fromMillis(ms);
 
 // --- подписки и настройки ---
@@ -57,11 +65,11 @@ function local(ms, tz) {
   return { key: `${p.year}-${p.month}-${p.day}`, min: Number(p.hour) * 60 + Number(p.minute) };
 }
 const hm = (s) => { const [h, m] = (s || '0:0').split(':').map(Number); return h * 60 + m; };
-// «Наступило ли время T в окне (from, now]» в часовом поясе tz
-function crossed(timeStr, tz) {
-  const a = local(from, tz); const b = local(now, tz); const t = hm(timeStr);
-  if (a.key === b.key) return a.min < t && t <= b.min;
-  return t <= b.min || a.min < t; // окно перешло через полночь
+// «Время T сегодня уже наступило, но не позже чем на lateMin, и сегодня ещё
+// не слали». Не зависит от того, когда был прошлый запуск.
+function due(timeStr, tz, sent, uid, lateMin) {
+  const b = local(now, tz); const t = hm(timeStr);
+  return sent[uid] !== b.key && b.min >= t && b.min - t <= lateMin;
 }
 
 const outbox = []; // { uid, title, body, url, tag }
@@ -88,8 +96,9 @@ watched.docs.forEach((d) => {
 });
 
 // --- 3. утренняя сводка, 4. дедлайны, 5. настроение ---
-const needDigest = uids.filter((u) => prefs[u].digest && crossed(prefs[u].digestTime, prefs[u].tz));
-const needMood = uids.filter((u) => prefs[u].mood && crossed(prefs[u].moodTime, prefs[u].tz));
+// сводку — до 5 часов позже назначенного, настроение — до конца дня
+const needDigest = uids.filter((u) => prefs[u].digest && due(prefs[u].digestTime, prefs[u].tz, sentDigest, u, 5 * 60));
+const needMood = uids.filter((u) => prefs[u].mood && due(prefs[u].moodTime, prefs[u].tz, sentMood, u, 24 * 60));
 const needDeadlines = uids.filter((u) => prefs[u].deadlines);
 
 let active = [];
@@ -108,6 +117,7 @@ if (needDigest.length) {
     const todayN = mine.filter((t) => local(t.deadline.toMillis(), tz).key === today).length;
     const overdue = mine.filter((t) => local(t.deadline.toMillis(), tz).key < today).length;
     const pays = plannedSnap.docs.map((d) => d.data()).filter((t) => t.date && local(t.date.toMillis(), tz).key <= today);
+    sentDigest[uid] = today;
     if (!todayN && !overdue && !pays.length) continue;
     const parts = [];
     if (todayN) parts.push(`задач на сегодня: ${todayN}`);
@@ -118,17 +128,20 @@ if (needDigest.length) {
 }
 
 for (const uid of needDeadlines) {
-  // дедлайн попадает в (from+1ч, now+1ч] — напоминаем за час; «конец дня» (23:59) пропускаем
+  // дедлайн в ближайший час и ещё не напоминали; «конец дня» (23:59) пропускаем
   active.filter((t) => t.assigneeUid === uid && t.deadline).forEach((t) => {
     const dl = t.deadline.toMillis();
-    if (dl > from + 3600000 && dl <= now + 3600000 && local(dl, prefs[uid].tz).min !== 23 * 60 + 59) {
-      push(uid, 'Через час дедлайн', `«${t.title}»`, `${APP_URL}?tab=tasks&view=today`, `dl-${t.id}`);
+    if (dl > now && dl <= now + 3600000 && sentDl[t.id] !== dl && local(dl, prefs[uid].tz).min !== 23 * 60 + 59) {
+      const mins = Math.max(1, Math.round((dl - now) / 60000));
+      push(uid, mins >= 50 ? 'Через час дедлайн' : `Дедлайн через ${mins} мин`, `«${t.title}»`, `${APP_URL}?tab=tasks&view=today`, `dl-${t.id}`);
+      sentDl[t.id] = dl;
     }
   });
 }
 
 for (const uid of needMood) {
   const today = local(now, prefs[uid].tz).key;
+  sentMood[uid] = today;
   const mood = await db.doc(`moods/${uid}_${today}`).get();
   if (!mood.exists) push(uid, 'Как прошёл день?', 'Отметь настроение цветом — займёт секунду', `${APP_URL}?tab=tasks&view=today`, `mood-${today}`);
 }
@@ -143,11 +156,14 @@ for (const m of outbox) {
       await webpush.sendNotification({ endpoint: s.endpoint, keys: s.keys }, JSON.stringify({ title: m.title, body: m.body, url: m.url, tag: m.tag }), { TTL: 6 * 3600 });
       sent += 1;
     } catch (e) {
-      if (e.statusCode === 404 || e.statusCode === 410) { await sub.ref.delete(); removed += 1; } // подписка умерла
-      else console.warn('push error', e.statusCode);
+      // 404/410 — подписка умерла; 403 с VapidPkHashMismatch — подписана другим ключом
+      const body = String(e.body || '');
+      if (e.statusCode === 404 || e.statusCode === 410 || /VapidPkHashMismatch/.test(body)) { await sub.ref.delete(); removed += 1; }
+      else console.warn('push error', e.statusCode, body.slice(0, 200), new URL(s.endpoint).host);
     }
   }
 }
-await stateRef.set({ lastRun: now });
+// в сухом прогоне ничего не помечаем отправленным
+await stateRef.set(DRY ? { lastRun: state.lastRun || null } : { lastRun: now, sentDigest, sentMood, sentDl }, { merge: true });
 console.log(`Готово: событий ${outbox.length}, отправлено ${sent}, удалено мёртвых подписок ${removed}`);
 process.exit(0);

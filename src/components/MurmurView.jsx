@@ -11,7 +11,7 @@ import {
   addMurmur, updateMurmur, subscribeMurmurDone, deleteMurmur, toggleMurmurWant, rateMurmur, unwatchMurmur,
   setMurmurSeasonWatched, setMurmurWatched, againMurmur, startMurmur,
 } from '../lib/db';
-import { murmurTitle, wantOrder } from '../lib/murmurUtil';
+import { murmurTitle, wantOrder, isStarted } from '../lib/murmurUtil';
 import { toast } from '../lib/toast';
 
 // Подтянуть сезоны сериала из TMDB и сохранить в запись
@@ -167,6 +167,38 @@ export function MurmurView({ items: liveItems, me, users, userOf }) {
           <div className="pick-result"><i className={K.icon} /><div>{murmurTitle(pick)}</div>{pick.note && <p className="hint">{pick.note}</p>}</div>
         </Sheet>
       )}
+    </div>
+  );
+}
+
+// «Смотрим сейчас» на экране «Сегодня»: начатые сериалы и кнопка следующей серии
+export function WatchingWidget({ items }) {
+  const list = items
+    .filter((x) => x.kind === 'series' && x.status !== 'done' && isStarted(x))
+    .map((x) => ({ x, prog: seriesProgress(x) }))
+    .filter(({ prog }) => prog?.next)
+    .sort((a, b) => tsMs(b.x.watchedAt) - tsMs(a.x.watchedAt))
+    .slice(0, 3);
+  if (!list.length) return null;
+  const mark = (x, { s, e }) => setMurmurSeasonWatched(x, s, toggleEpisode(watchedIn(x, s), e))
+    .then(() => toast(`${x.title}: ${fmtEp(s, e)} ✓`))
+    .catch((err) => reportError(err));
+  return (
+    <div className="watching">
+      <div className="section-title" style={{ marginTop: 6 }}><i className="fa-solid fa-tv" /> Смотрим сейчас</div>
+      {list.map(({ x, prog }) => (
+        <div key={x.id} className="watching-row">
+          {x.poster ? <img src={x.poster} alt="" loading="lazy" /> : <span className="watching-noposter"><i className="fa-solid fa-tv" /></span>}
+          <div className="watching-main">
+            <b>{x.title}</b>
+            <div className="series-bar"><span style={{ width: `${prog.pct}%` }} /></div>
+            <span className="hint" style={{ margin: 0 }}>{prog.last ? `${fmtEp(prog.last.s, prog.last.e)} · ` : ''}{prog.pct}%</span>
+          </div>
+          <button type="button" className="btn btn-sm btn-accent" onClick={() => mark(x, prog.next)} title="Отметить следующую серию">
+            <i className="fa-solid fa-check" /> {fmtEp(prog.next.s, prog.next.e)}
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

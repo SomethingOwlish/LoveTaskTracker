@@ -1,6 +1,6 @@
 import { db } from '../firebase';
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, writeBatch,
+  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, writeBatch,
   onSnapshot, serverTimestamp, Timestamp, increment, query, where, orderBy, limit,
 } from 'firebase/firestore';
 import { USERS } from '../config';
@@ -113,6 +113,11 @@ const onWallets = (list, snap, cb) => {
 export const subscribeTxRange = (from, to, cb) => sub(to
   ? query(txCol, where('date', '>=', Timestamp.fromDate(from)), where('date', '<', Timestamp.fromDate(to)))
   : query(txCol, where('date', '>=', Timestamp.fromDate(from))), cb, byDateDesc);
+// Разово (без подписки) — для переноса остатков плана прошлого периода
+export async function fetchTxRange(from, to) {
+  const snap = await getDocs(query(txCol, where('date', '>=', Timestamp.fromDate(from)), where('date', '<', Timestamp.fromDate(to))));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
 // Зарплаты с галочкой «новый месяц» — по ним режется бюджет (их немного)
 export const subscribeSalaries = (cb) => sub(query(txCol, where('salary', '==', true)), cb);
 // Все запланированные (их немного, и нужны просроченные из прошлых месяцев)
@@ -152,6 +157,8 @@ function txData(d) {
     planned: !!d.planned,
     // зарплата Совы: с её даты начинается новый бюджетный месяц
     salary: d.type === 'income' && !!d.salary,
+    // чей расход: uid (e-mail) или null — общий (см. whoseOf в budgetMath)
+    forUid: d.type === 'expense' ? d.forUid || null : null,
     projectId: d.projectId || null,
     receiptId: d.receiptId || null,
     items: (d.items || []).filter((x) => x.amount > 0),
@@ -252,6 +259,7 @@ export async function deleteReceipt(r) {
 
 export {
   walletBalances, inMonth, byCategory, totals, projectTotals, FEE_CATEGORIES,
+  spendBy, whoseOf, COMMON_CATS, dailyAllowance, guessCategory, noteKey,
   salaryStarts, periodOf, periodEnd, inPeriod, prevPeriod, nextPeriod, lastPeriods, planProgress,
 } from './budgetMath';
 
@@ -260,6 +268,19 @@ export {
 const settingsRef = doc(db, 'budgetSettings', 'main');
 export const subscribeBudgetSettings = (cb) => onSnapshot(settingsRef, (s) => cb({ baseCurrency: DEFAULT_BASE, limits: {}, ...(s.data() || {}) }), (e) => reportError(e));
 export const saveBudgetSettings = (patch) => setDoc(settingsRef, patch, { merge: true });
+// Запомнить «слово из комментария → категория», чтобы в следующий раз угадать
+export const learnNoteCategory = (key, category) => (key && category
+  ? setDoc(settingsRef, { noteCats: { [key]: category } }, { merge: true }).catch(() => {})
+  : Promise.resolve());
+
+// Перенести остаток запланированного расхода на сегодня (или закрыть, если 0)
+export async function carryPlanned(tx, amount, known) {
+  if (!(amount > 0.004)) return deleteTx(tx, known);
+  const now = new Date(); now.setHours(12, 0, 0, 0);
+  const patch = { date: Timestamp.fromDate(now), amount: Math.round(amount * 100) / 100, items: [], carried: true, updatedAt: serverTimestamp() };
+  if (tx.origAmount) patch.origAmount = Math.round((tx.origAmount * amount / tx.amount) * 100) / 100;
+  return updateDoc(doc(txCol, tx.id), patch);
+}
 
 /* ---------- Регулярные платежи ----------
    budgetRecurring/{id} = { шаблон операции…, every: 'month'|'week', day, nextDate: 'YYYY-MM-DD', active }

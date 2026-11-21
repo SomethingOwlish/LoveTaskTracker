@@ -55,9 +55,15 @@ export function sameMurmur(item, cand) {
 // Заголовок карточки: «Заново» перед названием у повтора.
 export const murmurTitle = (item) => (item.again ? `Заново: ${item.title}` : item.title);
 
-// Порядок «Хотим»: начатые игры, затем то, что хотят оба, затем новые.
+// Начали: игра — отметкой «Начали», сериал — хотя бы одной просмотренной серией.
+export function isStarted(x) {
+  if (x.startedAt) return true;
+  return Object.values(x.watched || {}).some((w) => Array.isArray(w) && w.length > 0);
+}
+
+// Порядок «Хотим»: начатые игры и сериалы, затем то, что хотят оба, затем новые.
 export function wantOrder(a, b, ms) {
-  return (b.startedAt ? 1 : 0) - (a.startedAt ? 1 : 0)
+  return (isStarted(b) ? 1 : 0) - (isStarted(a) ? 1 : 0)
     || (b.wantedBy?.length || 0) - (a.wantedBy?.length || 0)
     || ms(b.createdAt) - ms(a.createdAt);
 }

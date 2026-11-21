@@ -5,7 +5,7 @@ import { Sheet, Switch } from './Sheet';
 import { completeWithUndo, deleteWithUndo } from '../lib/actions';
 import { toDate, toLocalInput, fmtDateTime } from '../lib/util';
 import { defaultDeadline } from '../lib/taskDoc';
-import { parseEvery, everyKind, recurrenceLabel } from '../lib/recurrence';
+import { parseEvery, everyKind, recurrenceLabel, parseDays, daysKind, DOW_SHORT } from '../lib/recurrence';
 import { predictProjects, splitLines } from '../lib/taskPredict';
 import {
   createTask, updateTask, reopenTask,
@@ -63,12 +63,28 @@ function TagEditor({ value, onChange, placeholder, kind, suggestions = [], predi
   );
 }
 
-function ChecklistEditor({ items, onChange }) {
+const newItem = (text) => ({ id: Math.random().toString(36).slice(2, 8), text, done: false });
+
+function ChecklistEditor({ items, onChange, templates = [], onSaveTemplates }) {
   const [text, setText] = useState('');
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState('');
+  // шаблон добавляет недостающие пункты (повторно — без дублей)
+  const apply = (tpl) => {
+    const have = new Set(items.map((x) => x.text.toLowerCase()));
+    onChange([...items, ...tpl.items.filter((t) => !have.has(t.toLowerCase())).map(newItem)]);
+  };
+  const saveTpl = () => {
+    const n = name.trim();
+    if (!n || !items.length) return;
+    const tpl = { id: Math.random().toString(36).slice(2, 8), name: n, items: items.map((x) => x.text) };
+    onSaveTemplates?.([...templates.filter((t) => t.name !== n), tpl]);
+    setNaming(false); setName('');
+  };
   const add = () => {
     const v = text.trim();
     if (!v) return;
-    onChange([...items, { id: Math.random().toString(36).slice(2, 8), text: v, done: false }]);
+    onChange([...items, newItem(v)]);
     setText('');
   };
   return (
@@ -96,13 +112,34 @@ function ChecklistEditor({ items, onChange }) {
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
       />
+      {(templates.length > 0 || items.length > 0) && (
+        <div className="chips" style={{ marginTop: 8 }}>
+          {templates.length > 0 && <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>шаблоны:</span>}
+          {templates.map((t) => (
+            <span key={t.id} className="chip tag tpl-chip">
+              <button type="button" onClick={() => apply(t)} title={t.items.join(' · ')}>{t.name} +</button>
+              <span className="x" title="Удалить шаблон" onClick={() => { if (confirm(`Удалить шаблон «${t.name}»?`)) onSaveTemplates?.(templates.filter((x) => x.id !== t.id)); }}>×</span>
+            </span>
+          ))}
+          {items.length > 0 && onSaveTemplates && !naming && (
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setNaming(true)}><i className="fa-regular fa-bookmark" /> В шаблон</button>
+          )}
+        </div>
+      )}
+      {naming && (
+        <div className="row" style={{ marginTop: 8 }}>
+          <input className="input" autoFocus value={name} placeholder="Название шаблона" onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveTpl(); } }} />
+          <button type="button" className="btn" style={{ flex: 'none' }} onClick={saveTpl} disabled={!name.trim()}>Сохранить</button>
+        </div>
+      )}
     </div>
   );
 }
 
 const REC_PRESETS = ['none', 'daily', 'weekly', 'biweekly', 'monthly'];
 
-export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions = [], tagSuggestions = [], tasks = [] }) {
+export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions = [], tagSuggestions = [], tasks = [], checklistTemplates = [], onSaveTemplates }) {
   const editing = !!task;
   const [f, setF] = useState(() => ({
     title: task?.title || '',
@@ -146,7 +183,8 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
     [f.title, f.projectTags.length, tasks, projectSuggestions],
   );
   const ev = parseEvery(f.recurrence);
-  const [customRec, setCustomRec] = useState(!!ev);
+  const days = parseDays(f.recurrence);
+  const [customRec, setCustomRec] = useState(ev ? 'custom' : days ? 'days' : null);
 
   const payload = useMemo(() => ({
     title: f.title,
@@ -258,15 +296,33 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
 
         <div className="field">
           <label>Повтор</label>
-          <select className="input" value={customRec ? 'custom' : f.recurrence} onChange={(e) => {
+          <select className="input" value={customRec || f.recurrence} onChange={(e) => {
             const v = e.target.value;
-            if (v === 'custom') { setCustomRec(true); if (!ev) set('recurrence', everyKind(3, 'd')); }
-            else { setCustomRec(false); set('recurrence', v); }
+            if (v === 'custom') { setCustomRec('custom'); if (!ev) set('recurrence', everyKind(3, 'd')); }
+            else if (v === 'days') {
+              setCustomRec('days');
+              // по умолчанию — день недели срока (или сегодняшний)
+              if (!days) set('recurrence', daysKind([(f.deadline ? new Date(f.deadline) : new Date()).getDay()]));
+            } else { setCustomRec(null); set('recurrence', v); }
           }}>
             {REC_PRESETS.map((k) => <option key={k} value={k}>{recurrenceLabel(k)}</option>)}
+            <option value="days">По дням недели…</option>
             <option value="custom">Свой интервал…</option>
           </select>
-          {customRec && ev && (
+          {customRec === 'days' && (
+            <div className="dow-pick">
+              {[1, 2, 3, 4, 5, 6, 0].map((d) => {
+                const on = (days || []).includes(d);
+                return (
+                  <button key={d} type="button" className={on ? 'on' : ''} onClick={() => {
+                    const next = on ? (days || []).filter((x) => x !== d) : [...(days || []), d];
+                    if (next.length) set('recurrence', daysKind(next));
+                  }}>{DOW_SHORT[d]}</button>
+                );
+              })}
+            </div>
+          )}
+          {customRec === 'custom' && ev && (
             <div className="row every-row">
               <span>Раз в</span>
               <input className="input" type="number" min="1" max="365" inputMode="numeric" value={ev.n}
@@ -326,7 +382,7 @@ export function TaskModal({ task, me, users, userOf, onClose, projectSuggestions
 
         <div className="field">
           <label>Чеклист</label>
-          <ChecklistEditor items={f.checklist} onChange={(v) => set('checklist', v)} />
+          <ChecklistEditor items={f.checklist} onChange={(v) => set('checklist', v)} templates={checklistTemplates} onSaveTemplates={onSaveTemplates} />
         </div>
 
         <div style={{ marginBottom: 14 }}>

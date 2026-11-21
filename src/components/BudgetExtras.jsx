@@ -4,6 +4,7 @@ import { Sheet, Seg } from './Sheet';
 import { reportError } from '../lib/toast';
 import {
   saveRecurring, deleteRecurring, deleteTx, subscribeTxRange, totals, catIcon, lastPeriods, inPeriod,
+  byCategory, spendBy, prevPeriod, fetchTxRange,
   EXPENSE_CATS, INCOME_CATS, FEE_CATEGORIES, POCKET_CATS,
 } from '../lib/budget';
 import { CURRENCIES, CURRENCY_CODES, fmtCur, curOf } from '../lib/currency';
@@ -191,6 +192,63 @@ function fmtShort(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1).replace('.0', '') + 'м';
   if (n >= 1e3) return Math.round(n / 1e3) + 'к';
   return String(Math.round(n));
+}
+
+/* ---------- Итоги бюджетного месяца ---------- */
+// Импорт из BudgetView — по кругу, но используется только при отрисовке.
+import { WhoSpent, POCKET_OWNER } from './BudgetView';
+
+export function SummarySheet({ ctx, period, title, onClose }) {
+  const [list, setList] = useState(null);
+  const [prev, setPrev] = useState(null);
+  const key = period.from.getTime();
+  useEffect(() => subscribeTxRange(period.from, period.to, setList), [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const p = prevPeriod(period, ctx.starts || []);
+    let alive = true;
+    fetchTxRange(p.from, p.to || period.from).then((l) => alive && setPrev(l)).catch(() => {});
+    return () => { alive = false; };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const f = (v) => fmtCur(v, ctx.base);
+  if (!list) return <Sheet title={`Итоги · ${title}`} onClose={onClose}><p className="hint"><i className="fa-solid fa-spinner fa-spin" /> Считаю…</p></Sheet>;
+
+  const actual = list.filter((t) => !t.planned && inPeriod(t, period));
+  const { income, expense } = totals(actual, ctx.base, ctx.fx);
+  const cats = byCategory(actual, ctx.base, ctx.fx);
+  const who = spendBy(actual, ctx.base, ctx.fx, POCKET_OWNER);
+  const prevExp = prev ? totals(prev, ctx.base, ctx.fx).expense : null;
+  const diff = prevExp != null && prevExp > 0 ? expense - prevExp : null;
+  const biggest = actual.filter((t) => t.type === 'expense').sort((a, b) => b.amount - a.amount)[0];
+  const limits = ctx.settings?.limits || {};
+  const over = cats.filter((c) => limits[c.cat] && c.sum > limits[c.cat]);
+
+  return (
+    <Sheet title={`Итоги · ${title}`} onClose={onClose}>
+      <div className="stats money-stats">
+        <div className="stat"><div className="n pos">{f(income)}</div><div className="l">Пришло</div></div>
+        <div className="stat"><div className="n neg">{f(expense)}</div><div className="l">Ушло</div></div>
+        <div className="stat"><div className={`n ${income - expense >= 0 ? 'pos' : 'neg'}`}>{f(income - expense)}</div><div className="l">{income - expense >= 0 ? 'Отложили' : 'В минус'}</div></div>
+      </div>
+      {diff != null && (
+        <p className="hint" style={{ textAlign: 'center' }}>
+          Потратили на <b>{f(Math.abs(diff))}</b> {diff > 0 ? 'больше' : 'меньше'}, чем в прошлом месяце{diff < 0 ? ' 🎉' : ''}
+        </p>
+      )}
+      <div className="section-title">Кто сколько</div>
+      <WhoSpent who={who} />
+      <div className="section-title">Главные категории</div>
+      {cats.slice(0, 6).map((c) => (
+        <div key={c.cat} className={`cat-bar ${limits[c.cat] && c.sum > limits[c.cat] ? 'over' : ''}`}>
+          <span className="cat-name"><i className={catIcon(c.cat, 'expense')} /> {c.cat}</span>
+          <span className="cat-track"><span style={{ width: `${(c.sum / cats[0].sum) * 100}%` }} /></span>
+          <span className="cat-sum">{f(c.sum)}</span>
+        </div>
+      ))}
+      {!cats.length && <p className="hint">Расходов не было.</p>}
+      {over.length > 0 && <p className="hint bad">Вышли за лимит: {over.map((c) => c.cat).join(', ')}.</p>}
+      {biggest && <p className="hint">Самая крупная трата: <b>{biggest.note || biggest.category}</b> — {fmtCur(biggest.amount, curOf(biggest, ctx.base))}.</p>}
+    </Sheet>
+  );
 }
 
 export { curOf };
