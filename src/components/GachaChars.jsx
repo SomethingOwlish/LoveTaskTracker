@@ -94,7 +94,7 @@ export function CharsSection({ uid, game, mine, roster, save }) {
       </div>
 
       {game === 'endfield' && (
-        <p className="hint"><i className="fa-solid fa-circle-info" /> Для Endfield открытой базы нет: список сверен с вики вручную, без картинок. Нет кого-то — добавь кнопкой <i className="fa-solid fa-plus" />.</p>
+        <p className="hint"><i className="fa-solid fa-circle-info" /> Для Endfield открытой базы нет: список сверен с вики вручную, картинки — с Prydwen. Нет кого-то — добавь кнопкой <i className="fa-solid fa-plus" />.</p>
       )}
       {!shown.length && <div className="empty">Никого не нашла</div>}
 
@@ -180,7 +180,7 @@ function CharInfoSheet({ game, c, mine, roster, save, setOwned, onClose }) {
           {c.guide.src && <p className="hint" style={{ margin: 0 }}>Источник: <a href={c.guide.src} target="_blank" rel="noreferrer">{hostOf(c.guide.src)}</a></p>}
         </div>
       ) : <p className="hint">Подсказки пока нет — новый или редкий персонаж. Свою сборку можно записать в заметку ниже.</p>}
-      <a className="link-btn" href={guideLink(game, c)} target="_blank" rel="noreferrer"><i className="fa-solid fa-magnifying-glass" /> Найти свежий гайд</a>
+      <a className="link-btn" href={guideLink(game, c)} target="_blank" rel="noreferrer"><i className="fa-solid fa-magnifying-glass" /> {game === 'endfield' && !c.custom ? 'Полный гайд на Prydwen' : 'Найти свежий гайд'}</a>
 
       <div className="section-title">У меня</div>
       <div className="gc-cons-pick">

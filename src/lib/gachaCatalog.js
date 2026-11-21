@@ -58,6 +58,8 @@ export function filterCatalog(list, { q = '', rarity = 'all', el = 'all', show =
 
 // Ссылка на поиск гайда (у сайтов-гайдов нет стабильных адресов для всех героев)
 export function guideLink(game, c) {
+  // у Prydwen адреса Endfield совпадают с нашими id
+  if (game === 'endfield' && !c.custom) return `https://www.prydwen.gg/arknights-endfield/characters/${c.id}`;
   const q = `${c.en || c.name} ${GAMES[game].name} build team guide`;
   return `https://duckduckgo.com/?q=${encodeURIComponent(q)}`;
 }
