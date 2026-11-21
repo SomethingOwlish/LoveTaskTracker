@@ -280,3 +280,59 @@ export function chunkPulls(pulls, size = CHUNK) {
   for (let i = 0; i < pulls.length; i += size) out.push(pulls.slice(i, i + size));
   return out.length ? out : [[]];
 }
+
+/* ---------------- Сессия круток ---------------- */
+
+// «Открутила N раз, выпало вот это» → записи истории в правильном порядке,
+// чтобы pity считался верно. drops: [{ n, r, k, at? }] — at: номер крутки
+// внутри сессии (1..N); без номера редкие ставим в конец сессии.
+// Подряд идущие «пустые» крутки сжимаются в одну запись с c = сколько.
+export function sessionRecords({ game, pool, count, drops = [], time, base = Date.now() }) {
+  const g = GAMES[game];
+  const P = g.pools[pool];
+  if (!P) return { error: 'Нет такого баннера' };
+  const n = Number(count);
+  if (!Number.isInteger(n) || n < 1 || n > 1000) return { error: 'Сколько круток — от 1 до 1000' };
+  const list = drops.filter((d) => d && String(d.n || '').trim());
+  if (list.length > n) return { error: `Выпало больше (${list.length}), чем круток (${n})` };
+  const at = new Map();
+  for (const d of list) {
+    const p = Number(d.at);
+    if (d.at === '' || d.at == null) continue;
+    if (!Number.isInteger(p) || p < 1 || p > n) return { error: `Номер крутки у «${d.n}» — от 1 до ${n}` };
+    if (at.has(p)) return { error: `Две награды на крутке №${p}` };
+    at.set(p, d);
+  }
+  // без номера — с конца, на свободные места
+  let free = n;
+  for (const d of list) {
+    if (d.at !== '' && d.at != null) continue;
+    while (at.has(free)) free -= 1;
+    at.set(free, d);
+  }
+  const type = P.types[0];
+  const t = time || fmtTime();
+  const out = [];
+  let gap = 0;
+  const id = () => `m${base}${String(out.length).padStart(3, '0')}`;
+  const flush = () => { if (gap) { out.push({ i: id(), t, n: '', r: 3, k: 'c', g: type, c: gap }); gap = 0; } };
+  for (let p = 1; p <= n; p += 1) {
+    const d = at.get(p);
+    if (!d) { gap += 1; continue; }
+    flush();
+    out.push({ i: id(), t, n: String(d.n).trim(), r: Number(d.r) || g.top - 1, k: d.k === 'w' ? 'w' : 'c', g: type, c: 1 });
+  }
+  flush();
+  return { records: out };
+}
+
+// Сколько топ-дропов и на какой крутке (общий pity) они выпадут после сессии.
+export function sessionPreview(records, currentPity, top) {
+  let pity = currentPity;
+  const tops = [];
+  for (const r of records) {
+    pity += r.c || 1;
+    if (r.r >= top) { tops.push({ n: r.n, p: pity }); pity = 0; }
+  }
+  return { tops, pityAfter: pity };
+}

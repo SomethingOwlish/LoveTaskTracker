@@ -146,11 +146,29 @@ export async function importGacha(uid, game, params, onProgress = () => {}) {
 
 /* ---------------- План развития и отряды ---------------- */
 
+const EMPTY_ROSTER = { chars: [], teams: [], owned: {}, custom: [] };
 export function subscribeRoster(uid, game, cb) {
   return onSnapshot(doc(db, 'gachaRoster', key(uid, game)),
-    (s) => cb(s.exists() ? { chars: [], teams: [], ...s.data() } : { chars: [], teams: [] }),
-    (e) => { reportError(e); cb({ chars: [], teams: [] }); });
+    (s) => cb(s.exists() ? { ...EMPTY_ROSTER, ...s.data() } : { ...EMPTY_ROSTER }),
+    (e) => { reportError(e); cb({ ...EMPTY_ROSTER }); });
 }
-export function saveRoster(uid, game, { chars, teams }) {
-  return setDoc(doc(db, 'gachaRoster', key(uid, game)), { uid, game, chars, teams, updatedAt: serverTimestamp() });
+// Пишем документ целиком: план, отряды, отметки «есть у меня» и свои персонажи.
+export function saveRoster(uid, game, { chars = [], teams = [], owned = {}, custom = [] }) {
+  return setDoc(doc(db, 'gachaRoster', key(uid, game)), { uid, game, chars, teams, owned, custom, updatedAt: serverTimestamp() });
+}
+
+/* ---------------- Сессии круток (ручной ввод) ---------------- */
+
+export const RECENT_MAX = 30;
+// Записи сессии → в историю; сама сессия → в «Последние крутки» в сводке.
+export async function addSession(uid, game, records, session, recent = []) {
+  const { pulls, chunks } = await loadGachaLog(uid, game);
+  const next = [session, ...recent].slice(0, RECENT_MAX);
+  await saveGachaLog(uid, game, mergePulls(pulls, records).pulls, chunks, { recent: next });
+}
+// Убрать сессию: и из списка, и её записи из истории.
+export async function removeSession(uid, game, session, recent = []) {
+  const ids = new Set(session.ids || []);
+  const { pulls, chunks } = await loadGachaLog(uid, game);
+  await saveGachaLog(uid, game, pulls.filter((p) => !ids.has(p.i)), chunks, { recent: recent.filter((s) => s.id !== session.id) });
 }

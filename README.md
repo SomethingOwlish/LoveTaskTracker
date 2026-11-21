@@ -165,11 +165,27 @@ src/
     Mood.jsx           трекер настроения (легенды, календарь, виджет дня)
     MurmurView.jsx     «Мурмур»: фильмы / сериалы / игры с оценками
     BudgetView.jsx     бюджет-планнер
+    GachaView.jsx      гача: крутки, развитие, отряды
+    GachaChars.jsx     гача: каталог героев и отметки «есть у меня»
+  gacha/
+    genshin.json, hsr.json   каталог героев (обновляет scripts/gacha-catalog.mjs)
+    endfield.json            каталог Endfield — правится руками
+    guides.json, guides.js   подсказки по отрядам: собранные с сайтов + ручные правки
 public/
   manifest.webmanifest, sw.js, иконки   PWA
 extension/             расширение Chrome (npm run ext:build → extension/dist)
 firestore.rules        правила доступа (вставить в Firebase)
 ```
+
+### Обновить каталог гача-героев
+
+Когда в Genshin или HSR выходят новые персонажи:
+
+```bash
+node scripts/gacha-catalog.mjs
+```
+
+Скрипт берёт русские имена, звёздность, стихии, описания и картинки из открытой базы Project Amber (gi.yatta.moe / sr.yatta.moe) и перезаписывает `src/gacha/genshin.json` и `src/gacha/hsr.json`. Для Endfield такой базы нет — новых героев дописывай в `src/gacha/endfield.json` (или прямо в приложении кнопкой «+»). Советы по отрядам: `src/gacha/guides.json` — собранные с сайтов гайдов (с полем `src` — источник), `src/gacha/guides.js` — ручные правки поверх, по английскому имени.
 
 ---
 
