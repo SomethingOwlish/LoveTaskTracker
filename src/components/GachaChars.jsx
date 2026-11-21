@@ -8,6 +8,8 @@ import {
   loadCatalog, mergeCatalog, filterCatalog, ELEMENTS, WEAPONS, elementOf, guideLink, customChar,
 } from '../lib/gachaCatalog';
 
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
+
 export function useCatalog(game, roster) {
   const [base, setBase] = useState(null);
   useEffect(() => {
@@ -92,7 +94,7 @@ export function CharsSection({ uid, game, mine, roster, save }) {
       </div>
 
       {game === 'endfield' && (
-        <p className="hint"><i className="fa-solid fa-circle-info" /> Для Endfield открытой базы нет: список собран вручную, без картинок. Нет кого-то — добавь кнопкой <i className="fa-solid fa-plus" />.</p>
+        <p className="hint"><i className="fa-solid fa-circle-info" /> Для Endfield открытой базы нет: список сверен с вики вручную, без картинок. Нет кого-то — добавь кнопкой <i className="fa-solid fa-plus" />.</p>
       )}
       {!shown.length && <div className="empty">Никого не нашла</div>}
 
@@ -172,9 +174,10 @@ function CharInfoSheet({ game, c, mine, roster, save, setOwned, onClose }) {
       <div className="section-title">Как собирать</div>
       {c.guide ? (
         <div className="gc-guide">
-          <p><b>Роль:</b> {c.guide.role}</p>
-          <p><b>Отряд:</b> {c.guide.team}</p>
+          {c.guide.role && <p><b>Роль:</b> {c.guide.role}</p>}
+          {c.guide.team && <p><b>Отряд:</b> {c.guide.team}</p>}
           {c.guide.tip && <p><b>Важно:</b> {c.guide.tip}</p>}
+          {c.guide.src && <p className="hint" style={{ margin: 0 }}>Источник: <a href={c.guide.src} target="_blank" rel="noreferrer">{hostOf(c.guide.src)}</a></p>}
         </div>
       ) : <p className="hint">Подсказки пока нет — новый или редкий персонаж. Свою сборку можно записать в заметку ниже.</p>}
       <a className="link-btn" href={guideLink(game, c)} target="_blank" rel="noreferrer"><i className="fa-solid fa-magnifying-glass" /> Найти свежий гайд</a>

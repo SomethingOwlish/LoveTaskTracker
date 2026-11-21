@@ -2,8 +2,10 @@
 // Ключ — английское имя из каталога (src/gacha/*.json, поле en).
 // role — роль в отряде, team — с кем обычно собирают, tip — на что смотреть.
 // Свои заметки игрок пишет в карточке персонажа, они показываются рядом.
-// Составлено по состоянию на середину 2025 года: у новых персонажей подсказок
-// пока нет — для них в карточке есть ссылка на поиск гайда.
+// Здесь — написанное вручную (по состоянию на середину 2025 года).
+// guides.json — собрано с сайтов гайдов (genshin.gg, KQM, Game8, Prydwen…)
+// в ноябре 2026, пересказом, с полем src — откуда взято. Ручное важнее.
+import COLLECTED from './guides.json';
 
 export const GUIDES = {
   genshin: {
@@ -127,6 +129,9 @@ export const GUIDES = {
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 const cache = {};
 export function guideFor(game, en) {
-  if (!cache[game]) cache[game] = Object.fromEntries(Object.entries(GUIDES[game] || {}).map(([k, v]) => [norm(k), v]));
+  if (!cache[game]) {
+    const all = { ...(COLLECTED[game] || {}), ...(GUIDES[game] || {}) };
+    cache[game] = Object.fromEntries(Object.entries(all).map(([k, v]) => [norm(k), v]));
+  }
   return cache[game][norm(en)] || null;
 }
