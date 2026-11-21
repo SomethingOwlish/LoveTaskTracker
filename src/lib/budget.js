@@ -109,9 +109,12 @@ const onWallets = (list, snap, cb) => {
   cb(list);
 };
 
-// Операции за месяц [from, to)
-export const subscribeTxRange = (from, to, cb) => sub(
-  query(txCol, where('date', '>=', Timestamp.fromDate(from)), where('date', '<', Timestamp.fromDate(to))), cb, byDateDesc);
+// Операции за период [from, to); to = null — открытый период (всё с from)
+export const subscribeTxRange = (from, to, cb) => sub(to
+  ? query(txCol, where('date', '>=', Timestamp.fromDate(from)), where('date', '<', Timestamp.fromDate(to)))
+  : query(txCol, where('date', '>=', Timestamp.fromDate(from))), cb, byDateDesc);
+// Зарплаты с галочкой «новый месяц» — по ним режется бюджет (их немного)
+export const subscribeSalaries = (cb) => sub(query(txCol, where('salary', '==', true)), cb);
 // Все запланированные (их немного, и нужны просроченные из прошлых месяцев)
 // Записи, внесённые с даты from (по времени создания, а не дате операции) — для игры.
 export const subscribeTxCreatedSince = (from, cb) => sub(query(txCol, where('createdAt', '>=', Timestamp.fromDate(from))), cb);
@@ -147,6 +150,8 @@ function txData(d) {
     note: d.note || '',
     date: Timestamp.fromDate(d.date instanceof Date ? d.date : new Date(d.date)),
     planned: !!d.planned,
+    // зарплата Совы: с её даты начинается новый бюджетный месяц
+    salary: d.type === 'income' && !!d.salary,
     projectId: d.projectId || null,
     receiptId: d.receiptId || null,
     items: (d.items || []).filter((x) => x.amount > 0),
@@ -199,12 +204,18 @@ export async function deleteTx(tx, known) {
   return batch.commit();
 }
 
-// Провести запланированную операцию сегодняшним числом
-export async function commitPlanned(tx, known) {
+// Провести запланированную операцию сегодняшним числом. amount — если по
+// плану уже частично потратили (см. planProgress), проводим только остаток.
+export async function commitPlanned(tx, known, amount) {
   const batch = writeBatch(db);
-  const now = Timestamp.now();
-  batch.update(doc(txCol, tx.id), { planned: false, date: now });
-  applyEffects(batch, { ...tx, planned: false }, null, known);
+  const patch = { planned: false, date: Timestamp.now() };
+  if (amount != null && amount > 0 && Math.abs(amount - tx.amount) > 0.004) {
+    patch.amount = Math.round(amount * 100) / 100;
+    patch.items = [];
+    if (tx.origAmount) patch.origAmount = Math.round((tx.origAmount * amount / tx.amount) * 100) / 100;
+  }
+  batch.update(doc(txCol, tx.id), patch);
+  applyEffects(batch, { ...tx, ...patch }, null, known);
   return batch.commit();
 }
 
@@ -239,7 +250,10 @@ export async function deleteReceipt(r) {
   return batch.commit();
 }
 
-export { walletBalances, inMonth, byCategory, totals, projectTotals, FEE_CATEGORIES } from './budgetMath';
+export {
+  walletBalances, inMonth, byCategory, totals, projectTotals, FEE_CATEGORIES,
+  salaryStarts, periodOf, periodEnd, inPeriod, prevPeriod, nextPeriod, lastPeriods, planProgress,
+} from './budgetMath';
 
 /* ---------- Настройки бюджета ----------
    budgetSettings/main = { baseCurrency, limits: { категория: сумма в основной валюте } } */

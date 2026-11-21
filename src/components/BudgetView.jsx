@@ -7,17 +7,19 @@ import {
   subscribeReceipts, subscribeAllReceipts, fetchTx, fetchReceipt,
   saveWallet, saveTx, deleteTx, commitPlanned, saveProject, deleteProject,
   addReceipt, loadReceiptImage, deleteReceipt,
-  walletBalances, inMonth, byCategory, totals, projectTotals, catIcon,
+  walletBalances, byCategory, totals, projectTotals, catIcon,
   subscribeBudgetSettings, saveBudgetSettings, subscribeRecurring, materializeRecurring,
+  subscribeSalaries, salaryStarts, periodOf, inPeriod, prevPeriod, nextPeriod, planProgress,
   EXPENSE_CATS, INCOME_CATS, WALLET_ICONS, FEE_CATEGORIES,
 } from '../lib/budget';
 import { subscribeRates } from '../lib/fx';
 import { CURRENCIES, CURRENCY_CODES, DEFAULT_BASE, fmtCur, curOf, convert, fxRate, normCode } from '../lib/currency';
 import { convertInput, inputOf } from '../lib/budgetMath';
 import { RecurringList, LimitsSheet, MonthsChart } from './BudgetExtras';
+import { USERS } from '../config';
 import { Wishlist } from './Wishlist';
 import { processReceiptPhoto } from '../lib/receipt';
-import { parseMoney, monthTitle, toDate, dayKey, fmtDate, fmtWeekday, isSameDay, uid6 } from '../lib/util';
+import { parseMoney, toDate, dayKey, fmtDate, fmtWeekday, isSameDay, uid6 } from '../lib/util';
 
 const TYPE_LABEL = { expense: 'Расход', income: 'Доход', transfer: 'Перевод' };
 // валюты ввода операции: в каком порядке показывать + «другое» (свой код)
@@ -32,6 +34,17 @@ const parseRate = (s) => { const v = Number(String(s || '').replace(/[\s\u00a0\u
 // её при каждой отрисовке, чтобы не протаскивать через все компоненты.
 let BASE = DEFAULT_BASE;
 const fmtB = (v) => fmtCur(v, BASE);
+const OWL = Object.values(USERS).find((u) => u.avatar === 'owl')?.name || 'Совы';
+
+// «25 октября — 23 ноября» / «С 25 ноября» / «Октябрь 2026»
+export function periodTitle(p) {
+  if (!p.salary) {
+    const m = p.from.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }).replace(' г.', '');
+    return m[0].toUpperCase() + m.slice(1);
+  }
+  if (!p.to) return `С ${fmtDate(p.from)}`;
+  return `${fmtDate(p.from)} — ${fmtDate(new Date(p.to.getTime() - 1))}`;
+}
 
 export function BudgetView({ me, userOf }) {
   const [wallets, setWallets] = useState([]);
@@ -42,11 +55,12 @@ export function BudgetView({ me, userOf }) {
   const [settings, setSettings] = useState({ baseCurrency: DEFAULT_BASE, limits: {} });
   const [fx, setFx] = useState(null);
   const [recurring, setRecurring] = useState([]);
+  const [salaries, setSalaries] = useState([]);
   useEffect(() => {
     const u = [
       subscribeWallets(setWallets), subscribePlanned(setPlanned), subscribeProjects(setProjects),
       subscribeReceipts(setReceipts), subscribeBudgetSettings(setSettings), subscribeRates(setFx),
-      subscribeRecurring(setRecurring),
+      subscribeRecurring(setRecurring), subscribeSalaries(setSalaries),
     ];
     return () => u.forEach((f) => f());
   }, []);
@@ -61,16 +75,24 @@ export function BudgetView({ me, userOf }) {
 
   const [tab, setTabState] = useState(() => loadPref('budgetTab', 'overview'));
   const setTab = (t) => { setTabState(t); savePref('budgetTab', t); };
-  const [month, setMonth] = useState(() => { const d = new Date(); d.setDate(1); d.setHours(12); return d; });
-  // Операции читаем только за открытый месяц: остатки кошельков и итоги
+  // Бюджетный месяц — от зарплаты Совы до следующей. cursor — любой момент
+  // внутри открытого периода; по умолчанию «сейчас», поэтому стоит провести
+  // зарплату с галочкой — и сразу открывается новый месяц.
+  const starts = useMemo(() => salaryStarts(salaries), [salaries]);
+  const [cursor, setCursor] = useState(null);
+  const period = useMemo(() => periodOf(cursor || new Date(), starts), [cursor, starts]);
+  const goPeriod = (d) => {
+    const p = d < 0 ? prevPeriod(period, starts) : nextPeriod(period, starts);
+    if (!p) return;
+    // вернулись в текущий — снова следим за «сейчас»
+    setCursor(p.to == null || p.to > new Date() ? null : p.from);
+  };
+  // Операции читаем только за открытый период: остатки кошельков и итоги
   // проектов хранятся счётчиками и не требуют всей истории.
-  const monthKey = `${month.getFullYear()}-${month.getMonth()}`;
-  useEffect(() => {
-    const from = new Date(month.getFullYear(), month.getMonth(), 1);
-    const to = new Date(month.getFullYear(), month.getMonth() + 1, 1);
-    return subscribeTxRange(from, to, setMonthTx);
+  const periodKey = `${period.from.getTime()}-${period.to?.getTime() ?? ''}`;
+  useEffect(() => subscribeTxRange(period.from, period.to, setMonthTx),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthKey]);
+    [periodKey]);
   const txs = useMemo(() => {
     const m = new Map();
     [...monthTx, ...planned].forEach((t) => m.set(t.id, t));
@@ -88,7 +110,7 @@ export function BudgetView({ me, userOf }) {
   const newReceipts = receipts.filter((r) => r.status !== 'parsed');
 
   const ctx = {
-    me, userOf, wallets, activeWallets, txs, projects, receipts, balances, month, setMonth, known,
+    me, userOf, wallets, activeWallets, txs, projects, receipts, balances, period, goPeriod, starts, known,
     base: BASE, fx, settings, recurring,
     walletCur: (id) => curOf(wallets.find((w) => w.id === id), BASE),
     openLimits: () => setLimitsOpen(true),
@@ -120,13 +142,13 @@ export function BudgetView({ me, userOf }) {
 }
 
 /* ---------- Общие куски ---------- */
-function MonthNav({ month, setMonth }) {
-  const move = (d) => { const n = new Date(month); n.setMonth(n.getMonth() + d); setMonth(n); };
+function MonthNav({ ctx }) {
+  const p = ctx.period;
   return (
     <div className="cal-head">
-      <button className="btn btn-sm icon-btn" onClick={() => move(-1)} aria-label="Предыдущий месяц">‹</button>
-      <h2>{monthTitle(month)}</h2>
-      <button className="btn btn-sm icon-btn" onClick={() => move(1)} aria-label="Следующий месяц">›</button>
+      <button className="btn btn-sm icon-btn" onClick={() => ctx.goPeriod(-1)} aria-label="Предыдущий месяц">‹</button>
+      <h2 title={p.salary ? 'Бюджетный месяц — от зарплаты до зарплаты' : undefined}>{periodTitle(p)}</h2>
+      <button className="btn btn-sm icon-btn" onClick={() => ctx.goPeriod(1)} disabled={!p.to} aria-label="Следующий месяц">›</button>
     </div>
   );
 }
@@ -253,20 +275,42 @@ function receiptInitial(r, extra = {}) {
 const plannedSum = (list, type, fx) => list.filter((t) => t.type === type)
   .reduce((s, t) => s + convert((Number(t.amount) || 0) + (type === 'expense' ? Number(t.fee) || 0 : -(Number(t.fee) || 0)), curOf(t, BASE), BASE, fx), 0);
 
+// Запланированное в периоде с учётом уже потраченного по категориям:
+// { prog: planProgress, planExp — сколько ещё уйдёт, planInc — сколько придёт }
+export function usePlanState(ctx) {
+  const { txs, period, fx } = ctx;
+  return useMemo(() => {
+    const inP = txs.filter((t) => inPeriod(t, period));
+    const plannedList = inP.filter((t) => t.planned);
+    const prog = planProgress(plannedList, inP, BASE, fx);
+    // остаток плана: у расходов — минус уже потраченное в категории (+ комиссия)
+    const planExp = plannedList.filter((t) => t.type === 'expense').reduce((s, t) => {
+      const fee = convert(Number(t.fee) || 0, curOf(t, BASE), BASE, fx);
+      return s + (prog[t.id]?.left ?? 0) + fee;
+    }, 0);
+    const planInc = plannedSum(plannedList, 'income', fx);
+    return { inP, plannedList, prog, planExp, planInc };
+  }, [txs, period, fx]);
+}
+
 function Overview({ ctx, newReceipts }) {
-  const { activeWallets, balances, txs, month, setMonth, fx } = ctx;
+  const { activeWallets, balances, fx } = ctx;
   const total = activeWallets.reduce((s, w) => s + convert(balances[w.id] || 0, curOf(w, BASE), BASE, fx), 0);
   const multiCur = new Set(activeWallets.map((w) => curOf(w, BASE))).size > 1;
-  const monthTx = txs.filter((t) => inMonth(t, month));
+  const { inP: monthTx, plannedList, prog, planExp, planInc } = usePlanState(ctx);
   const { income, expense } = totals(monthTx, BASE, fx);
-  const plannedLeft = monthTx.filter((t) => t.planned);
-  const planExp = plannedSum(plannedLeft, 'expense', fx);
-  const planInc = plannedSum(plannedLeft, 'income', fx);
+  // план по категориям — чтобы показать «потрачено из запланированного»
+  const planByCat = {};
+  plannedList.forEach((t) => { if (prog[t.id]) planByCat[t.category] = (planByCat[t.category] || 0) + prog[t.id].plan; });
   const cats = byCategory(monthTx, BASE, fx);
   const limits = ctx.settings.limits || {};
   // категории с лимитом показываем, даже если по ним ещё ничего не потрачено
-  Object.keys(limits).forEach((c) => { if (limits[c] && !cats.some((x) => x.cat === c)) cats.push({ cat: c, sum: 0 }); });
-  const maxCat = Math.max(1, ...cats.map((c) => Math.max(c.sum, limits[c.cat] || 0)));
+  // категории с лимитом или планом показываем, даже если по ним ещё ничего не потрачено
+  [...Object.keys(limits), ...Object.keys(planByCat)].forEach((c) => {
+    if ((limits[c] || planByCat[c]) && !cats.some((x) => x.cat === c)) cats.push({ cat: c, sum: 0 });
+  });
+  const capOf = (c) => limits[c] || planByCat[c] || 0;
+  const maxCat = Math.max(1, ...cats.map((c) => Math.max(c.sum, capOf(c.cat))));
   const [chart, setChart] = useState(false);
 
   return (
@@ -276,7 +320,7 @@ function Overview({ ctx, newReceipts }) {
         <div className="n">{multiCur ? '≈ ' : ''}{fmtB(total)}</div>
         {(planExp > 0 || planInc > 0) && (
           <div className="hint" style={{ margin: '4px 0 0' }}>
-            После плана на месяц: <b>{fmtB(total + planInc - planExp)}</b>
+            После плана на этот месяц: <b>{fmtB(total + planInc - planExp)}</b>
           </div>
         )}
       </div>
@@ -304,7 +348,8 @@ function Overview({ ctx, newReceipts }) {
         </button>
       )}
 
-      <MonthNav month={month} setMonth={setMonth} />
+      <MonthNav ctx={ctx} />
+      {!ctx.period.salary && <p className="hint" style={{ textAlign: 'center', marginTop: -4 }}>Отметь зарплату {OWL} галочкой «новый месяц» — бюджет пойдёт от зарплаты до зарплаты.</p>}
       <div className="stats money-stats">
         <div className="stat"><div className="n pos">{fmtB(income)}</div><div className="l">Пришло</div></div>
         <div className="stat"><div className="n neg">{fmtB(expense)}</div><div className="l">Ушло</div></div>
@@ -316,7 +361,8 @@ function Overview({ ctx, newReceipts }) {
         <button className="btn btn-sm btn-ghost" style={{ flex: 'none' }} onClick={ctx.openLimits}><i className="fa-solid fa-sliders" /> Лимиты</button>
       </div>
       {cats.length > 0 ? cats.map((c) => {
-        const lim = limits[c.cat];
+        const lim = limits[c.cat] || planByCat[c.cat];
+        const isPlan = !limits[c.cat] && !!planByCat[c.cat];
         const over = lim && c.sum > lim;
         return (
           <div key={c.cat} className={`cat-bar ${over ? 'over' : ''}`}>
@@ -325,7 +371,7 @@ function Overview({ ctx, newReceipts }) {
               <span style={{ width: `${(c.sum / maxCat) * 100}%` }} />
               {lim ? <i className="cat-limit" style={{ left: `${(lim / maxCat) * 100}%` }} /> : null}
             </span>
-            <span className="cat-sum">{fmtB(c.sum)}{lim ? <small> / {fmtB(lim)}</small> : null}</span>
+            <span className="cat-sum">{fmtB(c.sum)}{lim ? <small> / {fmtB(lim)}{isPlan ? ' план' : ''}</small> : null}</span>
           </div>
         );
       }) : <p className="empty">В этом месяце расходов пока нет.</p>}
@@ -361,13 +407,13 @@ function dayTitle(d) {
 
 function Operations({ ctx }) {
   const [wallet, setWallet] = useState(null);
-  const list = ctx.txs.filter((t) => !t.planned && inMonth(t, ctx.month) && (!wallet || t.walletId === wallet || t.toWalletId === wallet));
+  const list = ctx.txs.filter((t) => !t.planned && inPeriod(t, ctx.period) && (!wallet || t.walletId === wallet || t.toWalletId === wallet));
   const groups = groupByDay(list);
   const { income, expense } = totals(list, BASE, ctx.fx);
   return (
     <div>
       <QuickActions ctx={ctx} />
-      <MonthNav month={ctx.month} setMonth={ctx.setMonth} />
+      <MonthNav ctx={ctx} />
       <div className="filters">
         <button className={`pill ${!wallet ? 'on' : ''}`} onClick={() => setWallet(null)}>Все</button>
         {ctx.activeWallets.map((w) => (
@@ -394,18 +440,38 @@ function Plan({ ctx }) {
   const now = new Date();
   const planned = ctx.txs.filter((t) => t.planned);
   const overdue = planned.filter((t) => toDate(t.date) < new Date(now.getFullYear(), now.getMonth(), now.getDate()));
-  const inThisMonth = planned.filter((t) => inMonth(t, ctx.month) && !overdue.includes(t)).sort((a, b) => toDate(a.date) - toDate(b.date));
-  const exp = plannedSum(inThisMonth, 'expense', ctx.fx);
-  const inc = plannedSum(inThisMonth, 'income', ctx.fx);
+  const { prog, planExp: exp, planInc: inc } = usePlanState(ctx);
+  const inThisMonth = planned.filter((t) => inPeriod(t, ctx.period) && !overdue.includes(t)).sort((a, b) => toDate(a.date) - toDate(b.date));
 
-  const row = (t) => (
-    <div key={t.id} className="plan-row">
-      <TxRow tx={t} ctx={ctx} showDate />
-      <button className="btn btn-sm btn-accent" onClick={() => commitPlanned(t, ctx.known).catch((e) => reportError(e))} title="Провести сегодняшним числом">
-        <i className="fa-solid fa-check" /> Провести
-      </button>
-    </div>
-  );
+  const row = (t) => {
+    const p = prog[t.id];
+    const cur = curOf(t, BASE);
+    // остаток в валюте операции (план считается в основной)
+    const leftCur = p && p.spent > 0 ? Math.round(convert(p.left, BASE, cur, ctx.fx) * 100) / 100 : null;
+    const used = p && p.left <= 0.004;
+    return (
+      <div key={t.id} className="plan-row">
+        <TxRow tx={t} ctx={ctx} showDate />
+        {p && p.spent > 0 && (
+          <div className="plan-progress">
+            <span className="cat-track"><span style={{ width: `${Math.min(100, (p.spent / p.plan) * 100)}%` }} /></span>
+            <span className="hint">потрачено {fmtB(p.spent)} из {fmtB(p.plan)} · {used ? 'план исчерпан' : <>осталось <b>{fmtB(p.left)}</b></>}</span>
+          </div>
+        )}
+        {used ? (
+          <button className="btn btn-sm" title="Всё уже потрачено обычными расходами — план можно закрыть"
+            onClick={() => deleteTx(t, ctx.known).catch((e) => reportError(e))}>
+            <i className="fa-solid fa-check-double" /> Закрыть план
+          </button>
+        ) : (
+          <button className="btn btn-sm btn-accent" title="Провести сегодняшним числом"
+            onClick={() => commitPlanned(t, ctx.known, leftCur).catch((e) => reportError(e))}>
+            <i className="fa-solid fa-check" /> Провести{leftCur != null ? ` ${fmtCur(leftCur, cur)}` : ''}
+          </button>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -414,12 +480,15 @@ function Plan({ ctx }) {
         <button className="btn" onClick={() => ctx.openTx(null, { type: 'income', planned: true })}><i className="fa-solid fa-plus" /> Ожидаемый доход</button>
       </div>
       {overdue.length > 0 && <><div className="section-title bad">Срок прошёл · провести или перенести</div>{overdue.map(row)}</>}
-      <MonthNav month={ctx.month} setMonth={ctx.setMonth} />
+      <MonthNav ctx={ctx} />
       <div className="row hint" style={{ margin: '0 0 8px' }}>
         <span>Ждём <Money value={inc} type="income" /></span>
         <span style={{ textAlign: 'right' }}>Потратим <Money value={exp} type="expense" /></span>
       </div>
       {inThisMonth.length === 0 ? <p className="empty">На этот месяц ничего не запланировано.</p> : inThisMonth.map(row)}
+      {inThisMonth.some((t) => t.type === 'expense') && (
+        <p className="hint">Обычные траты в категории запланированного расхода вычитаются из плана. «Провести» запишет только остаток.</p>
+      )}
 
       <RecurringList ctx={ctx} />
     </div>
@@ -544,7 +613,7 @@ function WalletSheet({ ctx, wallet, onClose }) {
   const [currency, setCurrency] = useState(curOf(wallet, BASE));
   const current = wallet ? ctx.balances[wallet.id] || 0 : 0;
   const [bal, setBal] = useState(String(current));
-  const ops = wallet ? ctx.txs.filter((t) => !t.planned && inMonth(t, ctx.month) && (t.walletId === wallet.id || t.toWalletId === wallet.id)) : [];
+  const ops = wallet ? ctx.txs.filter((t) => !t.planned && inPeriod(t, ctx.period) && (t.walletId === wallet.id || t.toWalletId === wallet.id)) : [];
 
   const save = () => {
     const desired = parseMoney(bal);
@@ -582,7 +651,7 @@ function WalletSheet({ ctx, wallet, onClose }) {
       </div>
       {wallet && (
         <>
-          <div className="section-title">Операции · {monthTitle(ctx.month)}</div>
+          <div className="section-title">Операции · {periodTitle(ctx.period)}</div>
           {ops.length ? <div className="tx-list">{ops.map((t) => <TxRow key={t.id} tx={t} ctx={ctx} showDate />)}</div> : <p className="hint">Пока нет.</p>}
           <button className="btn btn-ghost btn-block" style={{ marginTop: 14, color: 'var(--text-dim)' }}
             onClick={() => { if (confirm('Спрятать кошелёк? Операции сохранятся.')) { saveWallet(wallet.id, { archived: true }); onClose(); } }}>
@@ -607,6 +676,7 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
   const [note, setNote] = useState(src.note || '');
   const [date, setDate] = useState(dayKey(src.date ? (toDate(src.date) || new Date(src.date)) : new Date()));
   const [planned, setPlanned] = useState(!!src.planned);
+  const [salary, setSalary] = useState(!!src.salary);
   const [projectId, setProjectId] = useState(src.projectId || null);
   const [receiptId, setReceiptId] = useState(src.receiptId || null);
   const [items, setItems] = useState(() => srcIn.items.map((x) => ({ ...x, amountStr: String(x.amount) })));
@@ -677,7 +747,7 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
       type, ...money, feeCategory,
       toAmount: crossCur ? toNum : null, toCurrency,
       walletId, toWalletId, category: category || cats[cats.length - 1].id, note: note.trim(),
-      date: when, planned, projectId, receiptId,
+      date: when, planned, projectId, receiptId, salary: type === 'income' && salary,
     }, ctx.me.uid, ctx.known).catch((e) => reportError(e, 'Не сохранилось'));
     onClose();
   };
@@ -829,6 +899,14 @@ function TxSheet({ ctx, tx, initial = {}, onClose }) {
       <div style={{ marginBottom: 14 }}>
         <Switch on={planned} onChange={setPlanned} label="Запланировано (ещё не потрачено)" />
       </div>
+
+      {type === 'income' && (
+        <div style={{ marginBottom: 14 }}>
+          <Switch on={salary} onChange={(v) => { setSalary(v); if (v && !category) setCategory('Зарплата'); }}
+            label={`Зарплата ${OWL} — начать новый месяц`} />
+          {salary && <div className="hint">Бюджетный месяц начнётся с {fmtDate(new Date(date.replace(/-/g, '/')))}{planned ? ' — когда проведёшь' : ''}: сводки, лимиты и план пойдут заново.</div>}
+        </div>
+      )}
 
       {type === 'expense' && (
         <div className="field">

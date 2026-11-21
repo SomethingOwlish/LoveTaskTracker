@@ -28,3 +28,32 @@ describe('nextFutureRecurrence', () => {
     expect(nextFutureRecurrence(d(2026, 11, 17), 'daily', now)).toEqual(d(2026, 11, 18));
   });
 });
+
+import { nextRecurrence as nr2, recurrenceLabel, parseEvery, everyKind } from '../src/lib/recurrence';
+import { predictProjects, splitLines } from '../src/lib/taskPredict';
+describe('свой интервал повтора', () => {
+  it('раз в 3 дня', () => {
+    expect(nr2(new Date(2026, 0, 30), 'every:3:d')).toEqual(new Date(2026, 1, 2));
+  });
+  it('раз в 2 месяца с концом месяца', () => {
+    expect(nr2(new Date(2026, 11, 31), 'every:2:m')).toEqual(new Date(2027, 1, 28));
+  });
+  it('подписи', () => {
+    expect(recurrenceLabel('every:3:d')).toBe('Раз в 3 дня');
+    expect(recurrenceLabel('every:5:w')).toBe('Раз в 5 недель');
+    expect(recurrenceLabel('every:1:m')).toBe('Раз в месяц');
+    expect(recurrenceLabel('weekly')).toBe('Каждую неделю');
+    expect(parseEvery(everyKind('0', 'd'))).toEqual({ n: 1, unit: 'd' });
+  });
+});
+describe('угадывание проекта и список', () => {
+  const tasks = [{ title: 'Купить продукты', projectTags: ['Дом'] }, { title: 'Отчёт по продажам', projectTags: ['Работа'] }];
+  it('по похожим словам', () => {
+    expect(predictProjects('продуктов на неделю', tasks)).toEqual(['Дом']);
+    expect(predictProjects('Работа: созвон', tasks, ['Работа'])).toEqual(['Работа']);
+    expect(predictProjects('погладить кота', tasks)).toEqual([]);
+  });
+  it('строки списка', () => {
+    expect(splitLines('- молоко\n\n2. хлеб\n• сыр ')).toEqual(['молоко', 'хлеб', 'сыр']);
+  });
+});
