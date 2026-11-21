@@ -4,14 +4,18 @@ import { Avatar } from './Avatar';
 import { toast, toastError, reportError } from '../lib/toast';
 import {
   GAMES, GAME_KEYS, parseImportLink, classifyTops, avgPity, pityTone, manualTop, manualFiller, fmtTime, cmpPull, poolOf,
+  sessionRecords, sessionPreview,
 } from '../lib/gacha';
+import { applyDrops } from '../lib/gachaCatalog';
+import { CharsSection, useCatalog } from './GachaChars';
 import { STATS, GEAR_LEVELS, emptyChar, charReadiness, teamReport, matsLeft, grade } from '../lib/gachaPlan';
 import {
   subscribeGachaSummary, importGacha, ExpiredLinkError, setGachaOverride, saveGachaMeta, addManualPull, removePull,
-  loadGachaLog, subscribeRoster, saveRoster,
+  loadGachaLog, subscribeRoster, saveRoster, addSession, removeSession,
 } from '../lib/gachaDb';
 
-const SECTIONS = [['pulls', 'Крутки'], ['plan', 'Развитие'], ['teams', 'Отряды']];
+const SECTIONS = [['chars', 'Герои'], ['pulls', 'Крутки'], ['plan', 'Развитие'], ['teams', 'Отряды']];
+const CONS_ONE = { genshin: 'созвездие', hsr: 'эйдолон', endfield: 'потенциал' };
 const RES = { won: ['выиграли 50/50', 'good'], lost: ['проиграли', 'bad'], guar: ['гарант', 'ok'] };
 
 // Ссылку храним только на этом устройстве: она даёт доступ к истории круток.
@@ -29,7 +33,7 @@ function saveLink(uid, game, params) {
 export function GachaView({ me, users }) {
   const [game, setGameState] = useState(() => loadPref('gachaGame', 'genshin'));
   const setGame = (g) => { setGameState(g); savePref('gachaGame', g); };
-  const [section, setSectionState] = useState(() => loadPref('gachaSection', 'pulls'));
+  const [section, setSectionState] = useState(() => loadPref('gachaSection', 'chars'));
   const setSection = (s) => { setSectionState(s); savePref('gachaSection', s); };
   const [whoUid, setWho] = useState(me.uid);
   const mine = whoUid === me.uid;
@@ -50,18 +54,29 @@ export function GachaView({ me, users }) {
       </div>
       {!mine && <p className="hint"><i className="fa-regular fa-eye" /> Смотришь данные: {users.find((u) => u.uid === whoUid)?.name}. Менять может только хозяин.</p>}
 
-      {section === 'pulls' && <PullsSection key={whoUid + game} uid={whoUid} game={game} mine={mine} />}
-      {section !== 'pulls' && <RosterSection key={whoUid + game} uid={whoUid} game={game} mine={mine} section={section} />}
+      <GameBody key={whoUid + game} uid={whoUid} game={game} mine={mine} section={section} />
     </div>
   );
 }
 
+// Ростер (кто есть, план, отряды) нужен почти всем разделам — подписываемся один раз.
+function GameBody({ uid, game, mine, section }) {
+  const [roster, setRoster] = useState(null);
+  useEffect(() => subscribeRoster(uid, game, setRoster), [uid, game]);
+  if (!roster) return <div className="empty"><i className="fa-solid fa-spinner fa-spin" /></div>;
+  const save = (patch) => saveRoster(uid, game, { ...roster, ...patch });
+  if (section === 'chars') return <CharsSection uid={uid} game={game} mine={mine} roster={roster} save={save} />;
+  if (section === 'pulls') return <PullsSection uid={uid} game={game} mine={mine} roster={roster} save={save} />;
+  return <RosterSection uid={uid} game={game} mine={mine} section={section} roster={roster} save={save} />;
+}
+
 /* =================== Крутки =================== */
 
-function PullsSection({ uid, game, mine }) {
+function PullsSection({ uid, game, mine, roster, save }) {
   const G = GAMES[game];
   const [sum, setSum] = useState(null);
   useEffect(() => subscribeGachaSummary(uid, game, setSum), [uid, game]);
+  const catalog = useCatalog(game, roster);
   const [sheet, setSheet] = useState(null); // 'import' | 'manual' | 'std' | {top} | {history}
   const [busy, setBusy] = useState(null); // текст прогресса импорта
   const saved = mine ? loadLink(uid, game) : null;
@@ -86,10 +101,25 @@ function PullsSection({ uid, game, mine }) {
 
   const pools = Object.keys(G.pools).filter((k) => sum.pools?.[k]?.total);
   const overrides = sum.overrides || {};
-  const stdOf = (kind) => sum.std?.[kind] ?? G.std[kind];
+  // стандартные — по-английски; добавляем русские имена из каталога, чтобы
+  // ручные записи «Химеко» тоже считались проигрышем 50/50
+  const stdOf = (kind) => {
+    const names = sum.std?.[kind] ?? G.std[kind];
+    if (kind !== 'char' || !catalog) return names;
+    const en = new Set(names.map((n) => n.toLowerCase()));
+    return [...names, ...catalog.filter((c) => en.has(String(c.en).toLowerCase())).map((c) => c.name)];
+  };
 
   return (
     <div>
+      {mine && (
+        <button className="btn btn-accent btn-block mb" onClick={() => setSheet('session')}>
+          <i className="fa-solid fa-dice" /> Записать крутки
+        </button>
+      )}
+
+      <RecentCard uid={uid} game={game} mine={mine} sum={sum} />
+
       {mine && (
         <div className="card gc-actions">
           {busy ? (
@@ -98,7 +128,7 @@ function PullsSection({ uid, game, mine }) {
             <div className="chips">
               {G.query.length > 0 && saved && <button className="btn btn-sm btn-accent" onClick={() => runImport(saved.params)}><i className="fa-solid fa-rotate" /> Обновить</button>}
               <button className={`btn btn-sm ${saved ? '' : 'btn-accent'}`} onClick={() => setSheet('import')}><i className="fa-solid fa-link" /> {game === 'endfield' ? (saved ? 'Новый токен' : 'Импорт по токену') : (saved ? 'Новая ссылка' : 'Импорт по ссылке')}</button>
-              <button className="btn btn-sm" onClick={() => setSheet('manual')}><i className="fa-solid fa-pen" /> Вручную</button>
+              <button className="btn btn-sm" onClick={() => setSheet('manual')} title="Топ-дроп на крутке №N или пачка круток без него"><i className="fa-solid fa-pen" /> Точная запись</button>
               <button className="btn btn-sm btn-ghost" onClick={() => setSheet('std')} title="Стандартные персонажи для 50/50"><i className="fa-solid fa-sliders" /></button>
             </div>
           )}
@@ -163,6 +193,7 @@ function PullsSection({ uid, game, mine }) {
       {pools.length > 0 && <SourceNote game={game} compact />}
 
       {sheet === 'import' && <ImportSheet game={game} onClose={() => setSheet(null)} onImport={runImport} busy={busy} />}
+      {sheet === 'session' && <SessionSheet uid={uid} game={game} sum={sum} roster={roster} save={save} onClose={() => setSheet(null)} />}
       {sheet === 'manual' && <ManualSheet uid={uid} game={game} sum={sum} onClose={() => setSheet(null)} />}
       {sheet === 'std' && <StdSheet uid={uid} game={game} sum={sum} onClose={() => setSheet(null)} />}
       {sheet?.top && (
@@ -398,14 +429,11 @@ function HistorySheet({ uid, game, pool, onClose }) {
 
 /* =================== Развитие и отряды =================== */
 
-function RosterSection({ uid, game, mine, section }) {
-  const [roster, setRoster] = useState(null);
-  useEffect(() => subscribeRoster(uid, game, setRoster), [uid, game]);
+function RosterSection({ game, mine, section, roster, save: saveAll }) {
   const [edit, setEdit] = useState(null); // персонаж
   const [team, setTeam] = useState(null);
   const [name, setName] = useState('');
-  if (!roster) return <div className="empty"><i className="fa-solid fa-spinner fa-spin" /></div>;
-  const save = (next) => saveRoster(uid, game, { chars: roster.chars, teams: roster.teams, ...next }).catch(reportError);
+  const save = (next) => saveAll(next).catch(reportError);
 
   const addChar = () => {
     const n = name.trim();
@@ -617,5 +645,154 @@ function TeamSheet({ game, team, roster, onClose, onSave, onDelete }) {
         <textarea className="input" rows={3} value={t.note || ''} onChange={(e) => setT({ ...t, note: e.target.value })} />
       </div>
     </Sheet>
+  );
+}
+
+/* =================== Записать крутки (быстрый ручной ввод) =================== */
+
+// «Открутила 10, выпал конус 4★ и Кафка» — без точных номеров круток.
+function SessionSheet({ uid, game, sum, roster, save, onClose }) {
+  const G = GAMES[game];
+  const catalog = useCatalog(game, roster) || [];
+  const pools = Object.entries(G.pools);
+  const [pool, setPool] = useState(() => loadPref(`gachaPool:${game}`, Object.keys(G.pools)[0]));
+  const [mode, setMode] = useState('session');
+  const [count, setCount] = useState('10');
+  const [drops, setDrops] = useState([]);
+  const [pityNow, setPityNow] = useState('');
+  const [mark, setMark] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const P = G.pools[pool] || G.pools[Object.keys(G.pools)[0]];
+  const weaponPool = /weapon/i.test(pool);
+  const current = sum.pools?.[pool]?.pity || 0;
+  const pickPool = (k) => { setPool(k); savePref(`gachaPool:${game}`, k); };
+  const wName = game === 'hsr' ? 'конус' : 'оружие';
+
+  const addDrop = (r) => setDrops((d) => [...d, { n: '', r, k: weaponPool ? 'w' : 'c', at: '' }]);
+  const setDrop = (i, patch) => setDrops((d) => d.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+
+  let res;
+  if (mode === 'session') res = sessionRecords({ game, pool, count, drops });
+  else {
+    const n = Number(pityNow);
+    if (!Number.isInteger(n) || n < 0 || n >= P.hard) res = { error: `pity — от 0 до ${P.hard - 1}` };
+    else if (n < current) res = { error: `Учтено уже ${current}. Если в истории лишнее — удали ручные записи (тап по сессии в «Последних»).` };
+    else if (n === current) res = { error: 'Совпадает с тем, что уже учтено' };
+    else res = sessionRecords({ game, pool, count: n - current });
+  }
+  const preview = res.records ? sessionPreview(res.records, current, G.top) : null;
+  const filled = drops.filter((d) => d.n.trim());
+
+  const doSave = async () => {
+    if (!res.records) return;
+    setSaving(true);
+    try {
+      const session = {
+        id: res.records[0].i, t: fmtTime(), pool, count: res.records.reduce((s, r) => s + (r.c || 1), 0),
+        drops: mode === 'session' ? filled.map((d) => ({ n: d.n.trim(), r: d.r, k: d.k })) : [],
+        ids: res.records.map((r) => r.i), ...(mode === 'pity' ? { fix: true } : {}),
+      };
+      await addSession(uid, game, res.records, session, sum.recent || []);
+      if (mark && session.drops.length) {
+        const r = applyDrops(game, roster.owned || {}, catalog, session.drops);
+        if (r.changed.length) {
+          await save({ owned: r.owned });
+          toast(r.changed.map((c) => (c.isNew ? `${c.name} — новый!` : `${c.name} → ${G.cons[0]}${c.cons}`)).join(', '));
+        }
+      }
+      toast('Записала');
+      onClose();
+    } catch (e) { reportError(e); } finally { setSaving(false); }
+  };
+
+  const names = catalog.filter((c) => c.r >= G.top - 1).map((c) => c.name);
+  return (
+    <Sheet title="Записать крутки" onClose={onClose}
+      footer={<button className="btn btn-accent btn-block" disabled={!res.records || saving} onClick={doSave}>{saving ? <i className="fa-solid fa-spinner fa-spin" /> : 'Сохранить'}</button>}>
+      <div className="field">
+        <label>Баннер</label>
+        <div className="chips">
+          {pools.map(([k, p]) => <button key={k} className={`chip pick ${pool === k ? 'on' : ''}`} onClick={() => pickPool(k)}>{p.label}</button>)}
+        </div>
+        <p className="hint">Сейчас учтено: <b>{current}</b> / {P.hard} без {G.top}★</p>
+      </div>
+      <Seg className="mb seg-sm" value={mode} onChange={setMode} options={[['session', 'Открутила'], ['pity', 'Указать pity из игры']]} />
+
+      {mode === 'pity' ? (
+        <div className="field"><label>Сколько круток без {G.top}★ сейчас в игре</label>
+          <input className="input" inputMode="numeric" value={pityNow} onChange={(e) => setPityNow(e.target.value)} placeholder={String(current)} />
+          <p className="hint">Добавлю недостающие крутки без топ-дропа, чтобы счётчик совпал с игрой.</p>
+        </div>
+      ) : (
+        <>
+          <div className="field"><label>Сколько круток</label>
+            <div className="row" style={{ alignItems: 'center' }}>
+              <Seg className="seg-sm" value={['1', '10'].includes(count) ? count : 'x'} onChange={(v) => v !== 'x' && setCount(v)} options={[['1', '×1'], ['10', '×10'], ['x', 'другое']]} />
+              <input className="input" style={{ width: 80 }} inputMode="numeric" value={count} onChange={(e) => setCount(e.target.value)} />
+            </div>
+          </div>
+          <div className="field"><label>Что выпало ({G.top - 1}★ и {G.top}★, остальное не важно)</label>
+            {drops.map((d, i) => (
+              <div key={i} className="gc-drop">
+                <span className={`gc-drop-r r${d.r >= G.top ? 'top' : 'mid'}`}>{d.r}★</span>
+                <input className="input" value={d.n} onChange={(e) => setDrop(i, { n: e.target.value })} placeholder={d.k === 'w' ? `Какое ${wName}` : 'Кто'} list={d.k === 'c' ? 'gc-names' : undefined} />
+                <button className={`btn btn-sm ${d.k === 'w' ? 'btn-accent' : ''}`} onClick={() => setDrop(i, { k: d.k === 'w' ? 'c' : 'w' })} title={d.k === 'w' ? wName : 'персонаж'}>
+                  <i className={d.k === 'w' ? 'fa-solid fa-khanda' : 'fa-solid fa-user'} />
+                </button>
+                <input className="input gc-drop-at" inputMode="numeric" value={d.at} onChange={(e) => setDrop(i, { at: e.target.value })} placeholder="№" title="На какой крутке этой сессии (необязательно)" />
+                <button className="icon-btn btn-ghost btn" onClick={() => setDrops(drops.filter((_, j) => j !== i))} aria-label="Убрать"><i className="fa-solid fa-xmark" /></button>
+              </div>
+            ))}
+            <datalist id="gc-names">{names.map((n) => <option key={n} value={n} />)}</datalist>
+            <div className="chips">
+              <button className="btn btn-sm" onClick={() => addDrop(G.top)}><i className="fa-solid fa-plus" /> {G.top}★</button>
+              <button className="btn btn-sm" onClick={() => addDrop(G.top - 1)}><i className="fa-solid fa-plus" /> {G.top - 1}★</button>
+            </div>
+            <p className="hint">«№» — на какой по счёту крутке этой сессии выпало. Не помнишь — оставь пустым, посчитаю как последнюю.</p>
+          </div>
+          {filled.some((d) => d.k === 'c') && (
+            <label className="gc-check"><input type="checkbox" checked={mark} onChange={(e) => setMark(e.target.checked)} /> Отметить выпавших персонажей как «есть» (повтор → +1 {CONS_ONE[game]})</label>
+          )}
+        </>
+      )}
+
+      {res.error && (mode === 'pity' ? pityNow : true) && <p className="hint bad">{res.error}</p>}
+      {preview && (
+        <p className="hint">
+          После записи: <b>{preview.pityAfter}</b> / {P.hard}
+          {preview.tops.map((t) => <span key={t.n + t.p}> · {t.n} на {t.p}-й</span>)}
+        </p>
+      )}
+    </Sheet>
+  );
+}
+
+function RecentCard({ uid, game, mine, sum }) {
+  const G = GAMES[game];
+  const [open, setOpen] = useState(null);
+  const recent = sum.recent || [];
+  if (!recent.length) return null;
+  const del = (s) => {
+    if (!confirm('Удалить эту запись и её крутки из истории?')) return;
+    removeSession(uid, game, s, recent).then(() => { toast('Удалила'); setOpen(null); }, reportError);
+  };
+  return (
+    <div className="card gc-pool">
+      <div className="gc-pool-head"><h3>Последние крутки</h3></div>
+      <div className="gc-tops">
+        {recent.slice(0, 8).map((s) => (
+          <button key={s.id} className="gc-top" onClick={() => mine && setOpen(open === s.id ? null : s.id)}>
+            <span className="gc-pity ok">{s.count}</span>
+            <span className="gc-top-name">
+              {s.fix ? 'Поправка счётчика' : s.drops.length ? s.drops.map((d) => (
+                <span key={d.n + d.r} className={`gc-drop-n r${d.r >= G.top ? 'top' : 'mid'}`}>{d.n}{d.k === 'w' ? <i className="fa-solid fa-khanda gc-w" /> : null}</span>
+              )) : <span className="hint">ничего ценного</span>}
+            </span>
+            <span className="gc-date">{G.pools[s.pool]?.label} · {(s.t || '').slice(5, 10)}</span>
+            {open === s.id && <span className="link-btn" onClick={(e) => { e.stopPropagation(); del(s); }}><i className="fa-solid fa-trash" /></span>}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
