@@ -7,6 +7,7 @@ import { Seg, loadPref, savePref } from './Sheet';
 import { MoodTodayWidget } from './Mood';
 import { isActive, isClosed, projectsOf, toDate, startOfToday, endOfToday, fmtDate, fmtWeekday } from '../lib/util';
 import { createTask, subscribeClosedTasks } from '../lib/db';
+import { parseTaskList, toTaskData, htmlHasStructure, htmlToListText } from '../lib/taskImport';
 
 // Календарь тяжелее списков — грузим, только когда открыли вкладку.
 const CalendarView = lazy(() => import('./CalendarView').then((m) => ({ default: m.CalendarView })));
@@ -60,33 +61,95 @@ export function TasksView({ tasks, me, users, userOf, onOpen, onNew, projectColo
   );
 }
 
-/* ---------- Быстрое создание: каждая строка — отдельная задача ---------- */
+/* ---------- Быстрое создание ----------
+   Каждая строка или пункт списка — отдельная задача. Можно вставить или
+   перетащить сюда список из артефакта Claude: вложенные пункты станут
+   чеклистом, «## заголовок» — проектом, «@Гусик» — кому, «завтра» / «до 20.11»
+   — сроком, «!» — важным (см. lib/taskImport). */
 function QuickAdd({ me, partner, deadline }) {
   const [text, setText] = useState('');
   const [toPartner, setToPartner] = useState(false);
   const [flash, setFlash] = useState('');
+  const [drag, setDrag] = useState(false);
+  const [skip, setSkip] = useState(() => new Set()); // снятые галочки в предпросмотре
+  const [flip, setFlip] = useState(() => new Set()); // кому поменяли вручную
   const ref = useRef(null);
 
-  const lines = text.split('\n').map((l) => l.replace(/^\s*[-•*]\s*/, '').trim()).filter(Boolean);
+  const people = useMemo(
+    () => [{ key: 'me', name: me.name }, ...(partner ? [{ key: 'partner', name: partner.name }] : [])],
+    [me.name, partner?.name],
+  );
+  const parsed = useMemo(() => parseTaskList(text, { people }), [text, people]);
+  const defaultWho = toPartner && partner ? 'partner' : 'me';
+  const whoOf = (t, i) => {
+    const w = t.who || defaultWho;
+    return flip.has(i) && partner ? (w === 'me' ? 'partner' : 'me') : w;
+  };
+  const chosen = parsed.map((t, i) => [t, i]).filter(([, i]) => !skip.has(i));
+  // предпросмотр — когда задач несколько или в строке нашлось что-то кроме названия
+  const rich = parsed.length > 1 || parsed.some((t) => t.checklist.length || t.who || t.deadline || t.important || t.projectTags.length || t.link);
+
+  const change = (v) => {
+    setText(v);
+    setSkip(new Set());
+    setFlip(new Set());
+  };
+  const toggle = (setter, i) => setter((s) => { const n = new Set(s); n.has(i) ? n.delete(i) : n.add(i); return n; });
 
   const submit = () => {
-    if (!lines.length) return;
-    const assigneeUid = toPartner && partner ? partner.uid : me.uid;
+    if (!chosen.length) return;
     const dl = deadline ? deadline() : null;
     // не ждём ответа сервера — задачи появятся сразу из локального кэша
-    lines.forEach((title) => {
-      createTask({ title, authorUid: me.uid, assigneeUid, deadline: dl }).catch((e) => reportError(e, 'Не сохранилось'));
+    chosen.forEach(([t, i]) => {
+      const data = toTaskData({ ...t, who: whoOf(t, i) }, { me, partner, authorUid: me.uid, defaults: { deadline: dl } });
+      createTask(data).catch((e) => reportError(e, 'Не сохранилось'));
     });
-    setFlash(lines.length === 1 ? 'Добавлено' : `Добавлено: ${lines.length}`);
+    setFlash(chosen.length === 1 ? 'Добавлено' : `Добавлено: ${chosen.length}`);
     setTimeout(() => setFlash(''), 1500);
-    setText('');
+    change('');
     ref.current?.focus();
   };
 
-  const who = toPartner && partner ? partner : me;
+  // Перетащили или вставили отрисованный список: в text/plain браузер теряет
+  // маркеры и отступы, поэтому, если есть HTML со списком, берём его.
+  const fromTransfer = (dt) => {
+    const html = dt.getData('text/html');
+    if (htmlHasStructure(html)) return htmlToListText(html);
+    return dt.getData('text/plain');
+  };
+  const insert = (chunk) => {
+    const el = ref.current;
+    const at = el && document.activeElement === el ? el.selectionStart : text.length;
+    const end = el && document.activeElement === el ? el.selectionEnd : text.length;
+    const before = text.slice(0, at);
+    const glue = before && !before.endsWith('\n') && chunk.includes('\n') ? '\n' : '';
+    change(before + glue + chunk + text.slice(end));
+  };
+  const onPaste = (e) => {
+    const html = e.clipboardData?.getData('text/html');
+    if (!htmlHasStructure(html)) return; // обычная вставка
+    e.preventDefault();
+    insert(htmlToListText(html));
+  };
+  const onDrop = (e) => {
+    setDrag(false);
+    const chunk = fromTransfer(e.dataTransfer);
+    if (!chunk) return;
+    e.preventDefault();
+    insert(chunk);
+    ref.current?.focus();
+  };
+
+  const who = defaultWho === 'partner' ? partner : me;
+  const personOf = (k) => (k === 'partner' && partner ? partner : me);
 
   return (
-    <div className="quick-add">
+    <div
+      className={`quick-add ${drag ? 'drag' : ''}`}
+      onDragOver={(e) => { if ([...e.dataTransfer.types].some((t) => t.startsWith('text/'))) { e.preventDefault(); setDrag(true); } }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDrag(false); }}
+      onDrop={onDrop}
+    >
       <button
         type="button"
         className="qa-who"
@@ -101,15 +164,45 @@ function QuickAdd({ me, partner, deadline }) {
         className="qa-input"
         rows={Math.min(5, Math.max(1, text.split('\n').length))}
         value={text}
-        placeholder={deadline ? 'Задача на сегодня…' : 'Быстрая задача…'}
+        placeholder={drag ? 'Отпусти — разберу на задачи' : deadline ? 'Задача на сегодня…' : 'Быстрая задача…'}
         enterKeyHint="done"
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => change(e.target.value)}
+        onPaste={onPaste}
         onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
       />
-      <button type="button" className="qa-send" onClick={submit} disabled={!lines.length} aria-label="Создать">
-        {flash ? <i className="fa-solid fa-check" /> : lines.length > 1 ? `+${lines.length}` : <i className="fa-solid fa-arrow-up" />}
+      <button type="button" className="qa-send" onClick={submit} disabled={!chosen.length} aria-label="Создать">
+        {flash ? <i className="fa-solid fa-check" /> : chosen.length > 1 ? `+${chosen.length}` : <i className="fa-solid fa-arrow-up" />}
       </button>
-      {text.includes('\n') && <div className="qa-hint">Каждая строка станет отдельной задачей · для: {who.name}</div>}
+      {rich && (
+        <ul className="qa-preview">
+          {parsed.map((t, i) => {
+            const off = skip.has(i);
+            const p = personOf(whoOf(t, i));
+            const dl = t.deadline || (deadline ? deadline() : null);
+            return (
+              <li key={i} className={off ? 'off' : ''}>
+                <button type="button" className={`check ${off ? '' : 'on'}`} onClick={() => toggle(setSkip, i)}
+                  aria-label={off ? 'Добавить эту задачу' : 'Не добавлять эту задачу'}>{off ? '' : '✓'}</button>
+                <span className="qa-p-title">{t.important && <b className="qa-p-imp">!</b>}{t.title}</span>
+                <span className="qa-p-meta">
+                  {t.projectTags[0] && <span className="qa-p-chip">{t.projectTags[0]}</span>}
+                  {t.checklist.length > 0 && <span className="qa-p-chip"><i className="fa-solid fa-list-check" /> {t.checklist.length}</span>}
+                  {t.link && <i className="fa-solid fa-link" title={t.link} />}
+                  {dl && <span className="qa-p-chip">{fmtDate(dl)}</span>}
+                  {partner ? (
+                    <button type="button" className="qa-p-who" onClick={() => toggle(setFlip, i)} title={`Для: ${p.name}. Нажми, чтобы сменить`}>
+                      <Avatar email={p.email} avatar={p.avatar} />
+                    </button>
+                  ) : null}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {rich
+        ? <div className="qa-hint">Сними галочку, если задача не нужна · аватар — сменить исполнителя</div>
+        : text.includes('\n') && <div className="qa-hint">Каждая строка станет отдельной задачей · для: {who.name}</div>}
     </div>
   );
 }

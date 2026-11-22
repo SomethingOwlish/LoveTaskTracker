@@ -225,3 +225,25 @@ kbd { font: 11px ui-monospace, monospace; opacity: 0.65; }
 .price-row .chip { padding: 2px 7px; font-size: 12px; }
 #w-type .chip { font-size: 12px; }
 #w-save { width: 100%; margin-top: 12px; }
+
+/* ---------- задачи списком ---------- */
+#l-text { font-size: 13px; line-height: 1.4; resize: vertical; min-height: 84px; }
+#l-text.drop { border-style: dashed; border-color: var(--accent); }
+.l-preview { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; max-height: 210px; overflow-y: auto; }
+.l-preview li { display: flex; align-items: center; gap: 6px; font-size: 13px; min-height: 26px; }
+.l-preview li.off .l-title { color: var(--text-dim); text-decoration: line-through; }
+.l-preview li.dim { color: var(--text-dim); }
+.l-check {
+  flex: none; width: 20px; height: 20px; border-radius: 6px; padding: 0; cursor: pointer;
+  border: 1px solid var(--border); background: transparent; color: var(--accent-ink); font-size: 11px;
+}
+.l-check.on { background: var(--accent); border-color: var(--accent); }
+.l-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.l-imp { color: var(--warn); margin-right: 3px; }
+.l-chip {
+  flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; color: var(--text-dim); background: var(--surface-2); border-radius: 999px; padding: 1px 7px;
+}
+.l-who { flex: none; padding: 0; border: 0; background: none; cursor: pointer; }
+.l-who .ava { width: 22px; height: 22px; }
+#l-save { width: 100%; margin-top: 14px; }

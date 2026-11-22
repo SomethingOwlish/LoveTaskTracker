@@ -19,6 +19,9 @@ export default {
   },
   background: { service_worker: 'background.js', type: 'module' },
   permissions: ['identity', 'storage', 'contextMenus', 'notifications', 'activeTab', 'scripting'],
+  // Артефакты Claude показываются во фрейме с другого домена — без этого
+  // выделение в них не прочитать целиком (activeTab даёт доступ только к самой вкладке).
+  host_permissions: ['https://claude.ai/*', 'https://*.claudeusercontent.com/*'],
   commands: {
     _execute_action: {
       suggested_key: { default: 'Ctrl+Shift+Y', mac: 'Command+Shift+Y' },

@@ -39,6 +39,7 @@ async function buildMenus() {
     add({ id: `link:${who}`, title: `Задача ${label} из ссылки`, contexts: ['link'] });
     add({ id: `page:${who}`, title: `Задача ${label} из этой страницы`, contexts: ['page'] });
   }
+  add({ id: 'list', title: 'Разобрать в задачи…', contexts: ['selection'] });
   add({ id: 'murmur', title: 'В Мурмур', contexts: ['page'], documentUrlPatterns: MURMUR_SITE_PATTERNS });
   add({ id: 'wish', title: 'В вишлист', contexts: ['page', 'link'] });
 }
@@ -72,6 +73,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
 
+  if (info.menuItemId === 'list') return listFromSelection(tab, info);
   if (info.menuItemId === 'murmur') return murmurFromPage(tab);
   if (info.menuItemId === 'wish') return wishFromPage(tab, info);
 
@@ -104,6 +106,35 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     notify('Задача не сохранилась', e.message);
   }
 });
+
+/* ---------------- Список задач из выделения ----------------
+   В info.selectionText Chrome склеивает строки в одну, поэтому читаем
+   выделение в том фрейме, где кликнули (артефакт Claude — во фрейме),
+   вместе с HTML: из него форма восстановит пункты и вложенность.
+   Сам разбор и предпросмотр — в форме (там есть DOMParser). */
+async function listFromSelection(tab, info) {
+  let picked = { text: info.selectionText || '', html: '' };
+  try {
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, frameIds: [info.frameId || 0] },
+      func: () => {
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount) return null;
+        const box = document.createElement('div');
+        for (let i = 0; i < sel.rangeCount; i++) box.appendChild(sel.getRangeAt(i).cloneContents());
+        return { text: String(sel), html: box.innerHTML };
+      },
+    });
+    if (r?.result?.text) picked = r.result;
+  } catch { /* фрейм с чужого сайта без доступа — остаётся текст из меню */ }
+  await chrome.storage.session.set({ pendingList: { ...picked, url: info.pageUrl || '', at: Date.now() } });
+  try {
+    await chrome.action.openPopup();
+  } catch {
+    // старый Chrome или окно без фокуса — открываем форму отдельным окошком
+    chrome.windows.create({ url: chrome.runtime.getURL('popup.html?list=1'), type: 'popup', width: 380, height: 620 });
+  }
+}
 
 /* ---------------- Мурмур из правого клика ---------------- */
 const KIND_LABEL = { movie: 'Фильм', series: 'Сериал', game: 'Игра' };
