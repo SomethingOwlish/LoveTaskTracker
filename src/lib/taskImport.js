@@ -99,6 +99,8 @@ function whoFromToken(token, people) {
     if (!n) continue;
     const stem = n.slice(0, Math.max(3, n.length - 1));
     if (t.startsWith(stem) || stem.startsWith(t) && t.length >= 3) return p.key;
+    // «Сова» — это Совушка, «Гусь» — Гусик: короткое имя с тем же началом
+    if (t.length >= 3 && t.length <= 6 && t.slice(0, 3) === n.slice(0, 3)) return p.key;
   }
   return null;
 }
@@ -229,6 +231,29 @@ export function parseTaskList(text, opts = {}) {
     };
   };
 
+  // Без пунктов списка: если текст разбит пустыми строками на блоки и хоть
+  // один блок длиннее строки — блок = задача (первая строка — название,
+  // остальное — описание). Иначе каждая строка — задача.
+  if (!hasItems) {
+    const blocks = lines.join('\n').split(/\n\s*\n/).map((b) => b.split('\n').map((l) => l.trim()).filter(Boolean)).filter((b) => b.length);
+    if (blocks.some((b) => b.length > 1 && !HEADING_RE.test(b[0]))) {
+      for (const b of blocks) {
+        let rest = b;
+        const h = rest[0].match(HEADING_RE);
+        if (h) {
+          project = tidy(stripMarkdown(h[1]).text).replace(/:$/, '').slice(0, 40) || null;
+          rest = rest.slice(1);
+          if (!rest.length) continue;
+        }
+        const t = make(rest[0]);
+        if (!t) continue;
+        t.description = rest.slice(1).join('\n');
+        tasks.push(t);
+      }
+      return tasks;
+    }
+  }
+
   for (const line of lines) {
     if (!line.trim()) continue;
     const h = line.match(HEADING_RE);
@@ -246,8 +271,14 @@ export function parseTaskList(text, opts = {}) {
     }
     const m = line.match(ITEM_RE);
     if (!m) {
+      const ind = indentOf(line.match(/^\s*/)[0]);
+      // текст с отступом под пунктом — его описание (как продолжение пункта в markdown)
+      if (last && ind > lastIndent) {
+        last.description = (last.description ? last.description + '\n' : '') + line.trim();
+        continue;
+      }
       // абзац между пунктами — конец вложенности; сам абзац не задача
-      if (indentOf(line.match(/^\s*/)[0]) === 0) { last = null; skipIndent = null; }
+      if (ind === 0) { last = null; skipIndent = null; }
       continue;
     }
     const indent = indentOf(m[1]);
@@ -294,23 +325,95 @@ export function toTaskData(t, { me, partner, authorUid, defaults = {} }) {
   };
 }
 
-/* HTML (выделение, перетаскивание, вставка) → текст со списками.
-   В text/plain у отрисованного списка браузер теряет маркеры и отступы,
-   поэтому собираем текст из HTML сами: <li> → «- », вложенность → отступ,
-   <h1..h6> → «## », галочки → «[ ]» / «[x]».
-   Функция самодостаточная (без внешних ссылок) — расширение передаёт её
-   в chrome.scripting.executeScript, чтобы прочитать выделение на странице. */
+/* HTML (выделение, перетаскивание, вставка) → текст для разбора.
+   В text/plain браузер теряет маркеры списков, отступы и границы карточек,
+   поэтому, когда есть HTML, собираем текст из него сами:
+   - повторяющиеся карточки (одинаковые соседние блоки из нескольких строк —
+     как задачи в дашборде-артефакте) → «- название» + описание с отступом;
+     выпадающие списки, подписи, кнопки и поля пропускаем;
+   - иначе <li> → «- », вложенность → отступ, <h1..h6> → «## »,
+     галочки → «[ ]» / «[x]». */
+const SKIP_TAGS = /^(SCRIPT|STYLE|NOSCRIPT|SVG|BUTTON|SELECT|OPTION|LABEL|INPUT|TEXTAREA|TEMPLATE)$/;
+const BLOCK_TAGS = /^(P|DIV|SECTION|ARTICLE|ASIDE|BLOCKQUOTE|PRE|TABLE|THEAD|TBODY|TR|TD|TH|UL|OL|LI|DL|DT|DD|BR|HR|HEADER|FOOTER|MAIN|NAV|DETAILS|SUMMARY|FIGURE|FIGCAPTION|H[1-6])$/;
+const childEls = (n) => [...(n.childNodes || [])].filter((c) => c.nodeType === 1);
+
+// Текст элемента по строкам: каждый блок и каждая плашка — своя строка.
+function linesOf(node) {
+  const out = [];
+  let line = '';
+  const flush = () => { const t = line.replace(/\s+/g, ' ').trim(); if (t) out.push(t); line = ''; };
+  const walk = (n) => {
+    if (n.nodeType === 3) { line += n.nodeValue; return; }
+    if (n.nodeType !== 1) return;
+    const tag = n.tagName || '';
+    if (SKIP_TAGS.test(tag) || (n.getAttribute && n.getAttribute('aria-hidden') === 'true')) return;
+    const cls = String(n.className || '');
+    const pill = /\b(chip|tag|badge|pill|label)\b/i.test(cls); // плашки — отдельными строками
+    if (BLOCK_TAGS.test(tag) || pill) flush();
+    [...(n.childNodes || [])].forEach(walk);
+    if (BLOCK_TAGS.test(tag) || pill) flush();
+  };
+  walk(node);
+  flush();
+  return out;
+}
+
+// Ищем самую длинную серию одинаковых соседних карточек.
+function findCards(root) {
+  let best = null;
+  const visit = (el) => {
+    const kids = childEls(el);
+    const groups = new Map();
+    for (const k of kids) {
+      if (/^(LI|OPTION|UL|OL|TABLE|TBODY|THEAD|SELECT|SCRIPT|STYLE|SVG|BR|HR)$/.test(k.tagName || '')) continue;
+      const key = `${k.tagName}.${String(k.className || '').trim().split(/\s+/)[0] || ''}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(k);
+    }
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      const cards = g.map((k) => ({ el: k, lines: linesOf(k) })).filter((c) => c.lines.length);
+      // карточка — это несколько строк и никаких списков внутри (их разберёт обычный путь)
+      const rich = cards.filter((c) => c.lines.length >= 2 && !containsTag(c.el, 'LI'));
+      if (rich.length < 2 || rich.length < cards.length * 0.6) continue;
+      if (!best || rich.length > best.length) best = rich;
+    }
+    kids.forEach(visit);
+  };
+  visit(root);
+  return best;
+}
+function containsTag(el, tag) {
+  return childEls(el).some((c) => c.tagName === tag || containsTag(c, tag));
+}
+
+const DUE_RE = /^(?:срок:?\s*)?(до|к)\s+\S.*$/i;
+
+function cardsToText(cards, people) {
+  return cards.map(({ lines }) => {
+    const [title, ...rest] = lines;
+    const extra = [];
+    const desc = [];
+    for (const l of rest) {
+      // плашка «Сова» / «Гусь» → кому; «до 11.03.2027» → срок
+      if (l.length <= 20 && people.length && whoFromToken(l.replace(/^@/, ''), people)) extra.push('@' + l.replace(/^@/, ''));
+      else if (l.length <= 30 && DUE_RE.test(l) && extractDeadline(l).deadline) extra.push(l);
+      else desc.push(l);
+    }
+    return [`- ${[title, ...extra].join(' ')}`, ...desc.map((d) => `  ${d}`)].join('\n');
+  }).join('\n');
+}
+
 export function domToListText(root) {
   const out = [];
   let line = '';
   const flush = () => { if (line.trim()) out.push(line.replace(/\s+$/, '')); line = ''; };
-  const BLOCK = /^(P|DIV|SECTION|ARTICLE|BLOCKQUOTE|PRE|TABLE|TR|UL|OL|BR|HR|HEADER|FOOTER|MAIN)$/;
   const walk = (node, depth) => {
     if (node.nodeType === 3) { line += node.nodeValue.replace(/\s+/g, ' '); return; }
     if (node.nodeType !== 1 && node.nodeType !== 11) return;
     const tag = node.tagName || '';
-    if (/^(SCRIPT|STYLE|NOSCRIPT|SVG|BUTTON)$/.test(tag)) return;
-    if (tag === 'INPUT' && node.type === 'checkbox') { line += node.checked ? '[x] ' : '[ ] '; return; }
+    if (SKIP_TAGS.test(tag) && !(tag === 'INPUT' && node.type === 'checkbox')) return;
+    if (tag === 'INPUT') { line += node.checked ? '[x] ' : '[ ] '; return; }
     if (/^H[1-6]$/.test(tag)) { flush(); line = '## '; node.childNodes.forEach((c) => walk(c, depth)); flush(); return; }
     if (tag === 'LI') {
       flush();
@@ -326,21 +429,28 @@ export function domToListText(root) {
       line = before + (txt && txt !== node.href ? `[${txt}](${node.href})` : node.href);
       return;
     }
-    if (BLOCK.test(tag)) flush();
+    const block = BLOCK_TAGS.test(tag);
+    if (block) flush();
     node.childNodes.forEach((c) => walk(c, depth));
-    if (BLOCK.test(tag)) flush();
+    if (block) flush();
   };
   walk(root, 0);
   flush();
   return out.join('\n');
 }
 
-// Есть ли в HTML что-то, ради чего стоит разбирать его вместо text/plain.
-export function htmlHasStructure(html) {
-  return /<(li|h[1-6])[\s>]/i.test(html || '');
+// Корень выделения / вставки → текст: карточки, если они есть, иначе списки.
+export function domToTaskText(root, people = []) {
+  const cards = findCards(root);
+  return cards ? cardsToText(cards, people) : domToListText(root);
 }
 
-export function htmlToListText(html) {
+// Есть ли в HTML разметка, ради которой стоит разбирать его вместо text/plain.
+export function htmlHasStructure(html) {
+  return /<(li|h[1-6]|article|section|div|tr|p)[\s>]/i.test(html || '');
+}
+
+export function htmlToListText(html, people = []) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  return domToListText(doc.body);
+  return domToTaskText(doc.body, people);
 }

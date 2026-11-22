@@ -114,7 +114,7 @@ function QuickAdd({ me, partner, deadline }) {
   // маркеры и отступы, поэтому, если есть HTML со списком, берём его.
   const fromTransfer = (dt) => {
     const html = dt.getData('text/html');
-    if (htmlHasStructure(html)) return htmlToListText(html);
+    if (htmlHasStructure(html)) return htmlToListText(html, people);
     return dt.getData('text/plain');
   };
   const insert = (chunk) => {
@@ -129,7 +129,7 @@ function QuickAdd({ me, partner, deadline }) {
     const html = e.clipboardData?.getData('text/html');
     if (!htmlHasStructure(html)) return; // обычная вставка
     e.preventDefault();
-    insert(htmlToListText(html));
+    insert(htmlToListText(html, people));
   };
   const onDrop = (e) => {
     setDrag(false);
@@ -188,6 +188,7 @@ function QuickAdd({ me, partner, deadline }) {
                   {t.projectTags[0] && <span className="qa-p-chip">{t.projectTags[0]}</span>}
                   {t.checklist.length > 0 && <span className="qa-p-chip"><i className="fa-solid fa-list-check" /> {t.checklist.length}</span>}
                   {t.link && <i className="fa-solid fa-link" title={t.link} />}
+                  {t.description && <i className="fa-solid fa-align-left" title={t.description} />}
                   {dl && <span className="qa-p-chip">{fmtDate(dl)}</span>}
                   {partner ? (
                     <button type="button" className="qa-p-who" onClick={() => toggle(setFlip, i)} title={`Для: ${p.name}. Нажми, чтобы сменить`}>

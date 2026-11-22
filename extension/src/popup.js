@@ -452,12 +452,13 @@ function renderWishForm($panel, { me, partner }, tab) {
    Вставили, перетащили или выделили список (например, из артефакта Claude) —
    разбираем на задачи, показываем, что получится, и создаём пачкой.
    Правила разбора — в src/lib/taskImport.js. */
-function listTextFrom(sel, html) {
-  return htmlHasStructure(html) ? htmlToListText(html) : (sel || '');
+function listTextFrom(sel, html, people) {
+  return htmlHasStructure(html) ? htmlToListText(html, people) : (sel || '');
 }
+const peopleOf = ({ me, partner }) => [{ key: 'me', name: me.name }, ...(partner ? [{ key: 'partner', name: partner.name }] : [])];
 
 function renderListForm($panel, { me, partner }, text, tab, saved) {
-  const people = [{ key: 'me', name: me.name }, ...(partner ? [{ key: 'partner', name: partner.name }] : [])];
+  const people = peopleOf({ me, partner });
   const s = { who: saved.who === 'partner' && partner ? 'partner' : 'me', deadline: 'none', skip: new Set(), flip: new Set(), items: [] };
   const hasLink = isUsefulUrl(tab.url);
   const chip = (key, label, on) => `<button type="button" class="chip ${on ? 'on' : ''}" data-key="${key}">${esc(label)}</button>`;
@@ -504,6 +505,7 @@ function renderListForm($panel, { me, partner }, text, tab, saved) {
         <span class="l-title">${t.important ? '<b class="l-imp">!</b>' : ''}${esc(t.title)}</span>
         ${t.projectTags[0] ? `<span class="l-chip">${esc(t.projectTags[0])}</span>` : ''}
         ${t.checklist.length ? `<span class="l-chip">☑ ${t.checklist.length}</span>` : ''}
+        ${t.description ? `<span class="l-chip" title="${esc(t.description)}">описание</span>` : ''}
         ${d ? `<span class="l-chip">${esc(fmt(d))}</span>` : ''}
         ${partner ? `<button type="button" class="l-who" data-act="who" title="Для: ${esc(p.name)} — нажми, чтобы сменить">${ava(p)}</button>` : ''}
       </li>`;
@@ -533,13 +535,13 @@ function renderListForm($panel, { me, partner }, text, tab, saved) {
     const html = e.clipboardData?.getData('text/html');
     if (!htmlHasStructure(html)) return;
     e.preventDefault();
-    insert(htmlToListText(html));
+    insert(htmlToListText(html, people));
   });
   $panel.addEventListener('dragover', (e) => { e.preventDefault(); area.classList.add('drop'); });
   $panel.addEventListener('dragleave', (e) => { if (!$panel.contains(e.relatedTarget)) area.classList.remove('drop'); });
   $panel.addEventListener('drop', (e) => {
     area.classList.remove('drop');
-    const chunk = listTextFrom(e.dataTransfer.getData('text/plain'), e.dataTransfer.getData('text/html'));
+    const chunk = listTextFrom(e.dataTransfer.getData('text/plain'), e.dataTransfer.getData('text/html'), people);
     if (!chunk) return;
     e.preventDefault();
     insert(chunk);
@@ -616,10 +618,10 @@ function renderMain(status, tab, saved, pending = null) {
   const { me } = status;
   const { media, product } = tab;
   // текст для вкладки «Списком»: из меню «Разобрать в задачи» или выделение
-  const listText = pending ?? listTextFrom(tab.selection, tab.selectionHtml);
-  // сама выбирается, только если выделен именно список (пункты или заголовки), а не абзацы
-  const isList = !!pending || ((htmlHasStructure(tab.selectionHtml) || /^\s*(?:[-*+•]|\d{1,3}[.)])\s/m.test(tab.selection))
-    && parseTaskList(listText).length > 1);
+  const people = peopleOf(status);
+  const listText = pending ? listTextFrom(pending.text, pending.html, people) : listTextFrom(tab.selection, tab.selectionHtml, people);
+  // сама выбирается, только если выделен именно список или карточки (после разбора есть пункты «- »), а не абзацы
+  const isList = !!pending || (/^\s*(?:[-*+•]|\d{1,3}[.)])\s/m.test(listText) && parseTaskList(listText, { people }).length > 1);
   // по умолчанию: список — «Списком», фильм/игра — Мурмур, товар — вишлист; если что-то выделено — задача
   const picked = !tab.selection.trim();
   let current = isList ? 'list' : picked && media ? 'murmur' : picked && product ? 'wish' : 'task';
@@ -734,7 +736,7 @@ async function takePendingList() {
     if (!p) return null;
     await chrome.storage.session.remove('pendingList');
     if (Date.now() - p.at > 2 * 60 * 1000) return null;
-    return { text: listTextFrom(p.text, p.html), url: p.url };
+    return { text: p.text || '', html: p.html || '', url: p.url };
   } catch {
     return null;
   }
@@ -751,7 +753,7 @@ async function start({ blank = false } = {}) {
     const t = pending && new URLSearchParams(location.search).has('list')
       ? { ...tab, url: pending.url, title: '', selection: '', selectionHtml: '', media: null, product: null }
       : tab;
-    renderMain(status, blank ? { ...t, title: '', selection: '', selectionHtml: '', media: null, product: null } : t, saved, pending?.text ?? null);
+    renderMain(status, blank ? { ...t, title: '', selection: '', selectionHtml: '', media: null, product: null } : t, saved, pending);
   } catch (e) {
     renderSignIn(e.message);
   }

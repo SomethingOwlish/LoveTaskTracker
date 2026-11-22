@@ -119,3 +119,56 @@ describe('domToListText', async () => {
     expect(r.map((x) => [x.title, x.checklist.length, x.link])).toEqual([['Грузчики сайт', 2, 'https://x.ru/'], ['Коробки', 0, null]]);
   });
 });
+
+describe('карточки из дашборда-артефакта', async () => {
+  const { domToTaskText } = await import('../src/lib/taskImport.js');
+  const t = (s) => ({ nodeType: 3, nodeValue: s });
+  const el = (tagName, kids = [], className = '') => ({ nodeType: 1, tagName, className, childNodes: kids });
+  const card = (title, desc, who, next) => el('ARTICLE', [
+    el('DIV', [el('DIV', [t(title)], 't'), el('DIV', [t(desc)], 'd')]),
+    el('DIV', [el('SPAN', [t(who)], 'chip'), el('SPAN', [t('в источнике: частично')], 'chip c-none'),
+      el('LABEL', [t('статус')]), el('SELECT', [el('OPTION', [t('не начато')]), el('OPTION', [t('в работе')])])], 'side'),
+    ...(next ? [el('DIV', [el('B', [t('Предлагаемый шаг:')]), t(' ' + next)], 'next')] : []),
+  ], 'task sev-hi');
+
+  it('каждая карточка — одна задача; фильтры и выпадающие списки не попадают', () => {
+    const root = el('SECTION', [
+      el('DIV', [el('LABEL', [t('Моя отметка'), el('SELECT', [el('OPTION', [t('все')])])]), el('LABEL', [t('показать закрытые')])], 'toolbar'),
+      el('DIV', [
+        card('Заполнить таблицу «Сюжеты»', '32 строки внесены 25.10.2026.', 'оба мастера', ''),
+        card('Обновить раздел «Про Тайминг»', 'Даты внесены.', 'Сова', 'Переписать тайминг.'),
+        card('Проверить реквизит', '46 строк.', 'Гусь', 'Сверить физически.'),
+      ], 'list'),
+    ]);
+    const r = parseTaskList(domToTaskText(root, people), opts);
+    expect(r.map((x) => [x.title, x.who])).toEqual([
+      ['Заполнить таблицу «Сюжеты»', null],
+      ['Обновить раздел «Про Тайминг»', 'me'],
+      ['Проверить реквизит', 'partner'],
+    ]);
+    expect(r[1].description).toContain('Предлагаемый шаг: Переписать тайминг.');
+    expect(r[0].description).not.toMatch(/не начато|в работе|статус/);
+    expect(r[0].deadline).toBeNull(); // «25.10.2026» в описании — не срок
+  });
+
+  it('обычный markdown-список не считается карточками', () => {
+    const root = el('DIV', [el('UL', [el('LI', [t('Раз'), el('UL', [el('LI', [t('a')])])]), el('LI', [t('Два')])])]);
+    expect(parseTaskList(domToTaskText(root, people), opts).map((x) => x.title)).toEqual(['Раз', 'Два']);
+  });
+});
+
+describe('текст без маркеров и описания', () => {
+  it('блоки через пустую строку: первая строка — название, остальное — описание', () => {
+    const r = parseTaskList('Позвонить в банк\nуточнить про карту\nдо пятницы\n\nКупить коробки\n\nПочинить кран', opts);
+    expect(r.map((x) => x.title)).toEqual(['Позвонить в банк', 'Купить коробки', 'Починить кран']);
+    expect(r[0].description).toBe('уточнить про карту\nдо пятницы');
+  });
+  it('текст с отступом под пунктом — описание, а не задача', () => {
+    const r = parseTaskList('- Задача\n  подробности\n  ещё\n- Вторая', opts);
+    expect(r.map((x) => [x.title, x.description])).toEqual([['Задача', 'подробности\nещё'], ['Вторая', '']]);
+  });
+  it('«@Сова» и «@Гусь» — короткие имена', () => {
+    expect(parseLine('Сделать @Сова', opts).who).toBe('me');
+    expect(parseLine('Сделать @Гусь', opts).who).toBe('partner');
+  });
+});
