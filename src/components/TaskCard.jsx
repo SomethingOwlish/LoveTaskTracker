@@ -6,6 +6,7 @@ import { reopenTask, toggleLike, updateTask } from '../lib/db';
 import { completeWithUndo, deleteWithUndo } from '../lib/actions';
 import { useSwipe, TRIGGER } from '../lib/useSwipe';
 import { reportError } from '../lib/toast';
+import { useBulk } from './Bulk';
 
 export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact = false }) {
   const author = userOf(task.authorUid);
@@ -25,7 +26,12 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact
     const next = (task.checklist || []).map((c) => (c.id === id ? { ...c, done: !c.done } : c));
     updateTask(task.id, { checklist: next }).catch((e) => reportError(e, 'Не сохранилось'));
   };
+  // режим выбора (пакетное редактирование на компьютере): клик — выбрать
+  const bulk = useBulk();
+  const selecting = !!bulk?.on;
+  const selected = selecting && bulk.has(task.id);
   const onCardClick = () => {
+    if (selecting) return bulk.toggle(task.id);
     if (checkTotal > 0) setShowList((v) => !v);
     else onOpen(task);
   };
@@ -40,6 +46,7 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact
 
   const onCheck = (e) => {
     e.stopPropagation();
+    if (selecting) return bulk.toggle(task.id);
     if (closed) return reopenTask(task).catch((e) => reportError(e));
     if (task.status === 'in_review') return onOpen(task);
     return completeWithUndo(task);
@@ -60,18 +67,25 @@ export function TaskCard({ task, me, userOf, onOpen, projectColors = {}, compact
           <span className="swipe-del">Удалить <i className="fa-solid fa-trash" /></span>
         </div>
       )}
-    <div className={`task ${closed ? 'done' : ''} ${compact ? 'compact' : ''} ${dx ? 'dragging' : ''}`}
+    <div className={`task ${closed ? 'done' : ''} ${compact ? 'compact' : ''} ${dx ? 'dragging' : ''} ${selecting ? 'selecting' : ''} ${selected ? 'selected' : ''}`}
       style={{ borderLeftColor: stripe, transform: dx ? `translateX(${dx}px)` : undefined }}
-      {...handlers}
+      {...(selecting ? {} : handlers)}
       onClick={onCardClick}>
       <div className="task-top">
-        <button
-          className={`check ${closed ? 'on' : ''}`}
-          onClick={onCheck}
-          aria-label={closed ? 'Вернуть в работу' : 'Отметить выполненной'}
-        >
-          {closed ? '✓' : ''}
-        </button>
+        {selecting ? (
+          <button className={`check bulk-pick ${selected ? 'on' : ''}`} onClick={onCheck}
+            aria-pressed={selected} aria-label={selected ? 'Убрать из выбранных' : 'Выбрать'}>
+            {selected ? <i className="fa-solid fa-square-check" /> : ''}
+          </button>
+        ) : (
+          <button
+            className={`check ${closed ? 'on' : ''}`}
+            onClick={onCheck}
+            aria-label={closed ? 'Вернуть в работу' : 'Отметить выполненной'}
+          >
+            {closed ? '✓' : ''}
+          </button>
+        )}
         <h3>{task.title}</h3>
         {task.status === 'in_review' && <span className="badge review">на проверке</span>}
         {task.needsReview && task.status !== 'in_review' && !closed && <span className="badge q">с проверкой</span>}

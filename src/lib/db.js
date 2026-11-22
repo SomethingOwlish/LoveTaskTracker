@@ -108,6 +108,26 @@ export async function updateTask(id, patch) {
   return updateDoc(doc(db, 'tasks', id), clean);
 }
 
+/* Пакетная правка (на компьютере): [{ id, patch }] одной или несколькими
+   пачками writeBatch (в пачке не больше 500 записей). Срок может прийти
+   Date, строкой, Timestamp (при отмене) или null. */
+export async function bulkUpdateTasks(entries) {
+  const toTs = (v) => {
+    if (!v) return null;
+    if (typeof v.toDate === 'function') return v;
+    return Timestamp.fromDate(new Date(v));
+  };
+  for (let i = 0; i < entries.length; i += 450) {
+    const batch = writeBatch(db);
+    entries.slice(i, i + 450).forEach(({ id, patch }) => {
+      const clean = { ...patch, updatedAt: serverTimestamp() };
+      if ('deadline' in patch) clean.deadline = toTs(patch.deadline);
+      batch.update(doc(db, 'tasks', id), clean);
+    });
+    await batch.commit();
+  }
+}
+
 /* Удаление с возможностью отмены: сам документ удаляем сразу, а комментарии
    и уведомления по задаче подчищаем через несколько секунд, если удаление
    не отменили. Отмена восстанавливает документ с тем же id. */
