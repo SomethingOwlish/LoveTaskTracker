@@ -8,6 +8,8 @@ import { MoodTodayWidget } from './Mood';
 import { isActive, isClosed, projectsOf, toDate, startOfToday, endOfToday, fmtDate, fmtWeekday } from '../lib/util';
 import { createTask, subscribeClosedTasks } from '../lib/db';
 import { parseTaskList, toTaskData, htmlHasStructure, htmlToListText } from '../lib/taskImport';
+import { spreadDates } from '../lib/bulk';
+import { BulkCtx, BulkBar, SelectGroup, useBulkOrder, useBulkState, useIsDesktop } from './Bulk';
 
 // Календарь тяжелее списков — грузим, только когда открыли вкладку.
 const CalendarView = lazy(() => import('./CalendarView').then((m) => ({ default: m.CalendarView })));
@@ -19,10 +21,15 @@ export function TasksView({ tasks, me, users, userOf, onOpen, onNew, projectColo
     const saved = loadPref('tasksMode', 'today');
     return MODES.includes(saved) ? saved : 'today';
   });
-  const setMode = (m) => { setModeState(m); savePref('tasksMode', m); };
+  const bulk = useBulkState();
+  const desktop = useIsDesktop();
+  const setMode = (m) => { setModeState(m); savePref('tasksMode', m); bulk.stop(); };
   const partner = users.find((u) => u.uid !== me.uid);
+  const canBulk = desktop && (mode === 'today' || mode === 'list');
+  useEffect(() => { if (!canBulk && bulk.on) bulk.stop(); }, [canBulk, bulk]);
 
   return (
+    <BulkCtx.Provider value={canBulk ? bulk : null}>
     <div>
       <Seg
         value={mode}
@@ -31,8 +38,15 @@ export function TasksView({ tasks, me, users, userOf, onOpen, onNew, projectColo
         className="mb tasks-seg"
       />
 
+      {/* пакетное редактирование — только на компьютере */}
+      {canBulk && !bulk.on && (
+        <button type="button" className="btn btn-sm btn-ghost bulk-start" onClick={bulk.start}>
+          <i className="fa-regular fa-square-check" /> Выбрать несколько
+        </button>
+      )}
+
       {(mode === 'today' || mode === 'list') && (
-        <QuickAdd me={me} partner={partner} deadline={mode === 'today' ? endOfToday : null} />
+        <QuickAdd me={me} partner={partner} deadline={mode === 'today' ? endOfToday : null} projects={projectsOf(tasks, me.uid)} />
       )}
 
       {mode === 'today' && (
@@ -54,10 +68,13 @@ export function TasksView({ tasks, me, users, userOf, onOpen, onNew, projectColo
 
       {/* В календаре своя кнопка «+ событие» у выбранного дня — вторая плавающая
           кнопка там только мешала бы. */}
-      {mode !== 'calendar' && onNew && (
+      {mode !== 'calendar' && onNew && !bulk.on && (
         <button className="fab" onClick={onNew} aria-label="Новая задача (подробно)"><i className="fa-solid fa-plus" /></button>
       )}
+
+      {canBulk && <BulkBar tasks={tasks} me={me} partner={partner} />}
     </div>
+    </BulkCtx.Provider>
   );
 }
 
@@ -66,8 +83,11 @@ export function TasksView({ tasks, me, users, userOf, onOpen, onNew, projectColo
    перетащить сюда список из артефакта Claude: вложенные пункты станут
    чеклистом, «## заголовок» — проектом, «@Гусик» — кому, «завтра» / «до 20.11»
    — сроком, «!» — важным (см. lib/taskImport). */
-function QuickAdd({ me, partner, deadline }) {
+function QuickAdd({ me, partner, deadline, projects = [] }) {
   const [text, setText] = useState('');
+  const [impProject, setImpProject] = useState(''); // проект для всех, у кого не указан
+  const [spread, setSpread] = useState(false); // раскидать по дням с завтра
+  const [spreadPer, setSpreadPer] = useState(1);
   const [toPartner, setToPartner] = useState(false);
   const [flash, setFlash] = useState('');
   const [drag, setDrag] = useState(false);
@@ -96,17 +116,30 @@ function QuickAdd({ me, partner, deadline }) {
   };
   const toggle = (setter, i) => setter((s) => { const n = new Set(s); n.has(i) ? n.delete(i) : n.add(i); return n; });
 
+  // «Раскидать»: задачи без своего срока по очереди встают на дни с завтра
+  const spreadAt = useMemo(() => {
+    const m = new Map();
+    if (!spread) return m;
+    const idx = chosen.filter(([t]) => !t.deadline).map(([, i]) => i);
+    const start = new Date(); start.setDate(start.getDate() + 1);
+    spreadDates(idx.length, { start, perDay: +spreadPer || 1 }).forEach((d, k) => m.set(idx[k], d));
+    return m;
+  }, [spread, spreadPer, chosen.map(([, i]) => i).join(','), parsed]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dateOf = (t, i) => t.deadline || spreadAt.get(i) || (deadline ? deadline() : null);
+  const projectOf = (t) => (t.projectTags.length ? t.projectTags : impProject.trim() ? [impProject.trim().replace(/^#/, '')] : []);
+
   const submit = () => {
     if (!chosen.length) return;
-    const dl = deadline ? deadline() : null;
     // не ждём ответа сервера — задачи появятся сразу из локального кэша
     chosen.forEach(([t, i]) => {
-      const data = toTaskData({ ...t, who: whoOf(t, i) }, { me, partner, authorUid: me.uid, defaults: { deadline: dl } });
+      const data = toTaskData({ ...t, who: whoOf(t, i), deadline: dateOf(t, i), projectTags: projectOf(t) }, { me, partner, authorUid: me.uid });
       createTask(data).catch((e) => reportError(e, 'Не сохранилось'));
     });
     setFlash(chosen.length === 1 ? 'Добавлено' : `Добавлено: ${chosen.length}`);
     setTimeout(() => setFlash(''), 1500);
     change('');
+    setImpProject('');
+    setSpread(false);
     ref.current?.focus();
   };
 
@@ -178,14 +211,15 @@ function QuickAdd({ me, partner, deadline }) {
           {parsed.map((t, i) => {
             const off = skip.has(i);
             const p = personOf(whoOf(t, i));
-            const dl = t.deadline || (deadline ? deadline() : null);
+            const dl = dateOf(t, i);
+            const proj = projectOf(t)[0];
             return (
               <li key={i} className={off ? 'off' : ''}>
                 <button type="button" className={`check ${off ? '' : 'on'}`} onClick={() => toggle(setSkip, i)}
                   aria-label={off ? 'Добавить эту задачу' : 'Не добавлять эту задачу'}>{off ? '' : '✓'}</button>
                 <span className="qa-p-title">{t.important && <b className="qa-p-imp">!</b>}{t.title}</span>
                 <span className="qa-p-meta">
-                  {t.projectTags[0] && <span className="qa-p-chip">{t.projectTags[0]}</span>}
+                  {proj && <span className="qa-p-chip">{proj}</span>}
                   {t.checklist.length > 0 && <span className="qa-p-chip"><i className="fa-solid fa-list-check" /> {t.checklist.length}</span>}
                   {t.link && <i className="fa-solid fa-link" title={t.link} />}
                   {t.description && <i className="fa-solid fa-align-left" title={t.description} />}
@@ -200,6 +234,22 @@ function QuickAdd({ me, partner, deadline }) {
             );
           })}
         </ul>
+      )}
+      {parsed.length > 1 && (
+        <div className="qa-opts">
+          <label>Проект
+            <input className="input" list="qa-projects" value={impProject} placeholder="для задач без проекта"
+              onChange={(e) => setImpProject(e.target.value)} />
+          </label>
+          <datalist id="qa-projects">{projects.map((p) => <option key={p} value={p} />)}</datalist>
+          <label className="qa-opt-check">
+            <input type="checkbox" checked={spread} onChange={(e) => setSpread(e.target.checked)} />
+            раскидать по дням с завтра, по
+            <input type="number" min="1" max="20" className="input qa-num" value={spreadPer} disabled={!spread}
+              onChange={(e) => setSpreadPer(e.target.value)} />
+            в день
+          </label>
+        </div>
       )}
       {rich
         ? <div className="qa-hint">Сними галочку, если задача не нужна · аватар — сменить исполнителя</div>
@@ -237,6 +287,8 @@ function TodayList({ tasks, me, partner, userOf, onOpen, projectColors, moods, m
 
   const now = new Date();
   const total = today.length + overdue.length;
+  useBulkOrder([...review, ...overdue, ...today, ...done].map((t) => t.id));
+  const ids = (l) => l.map((t) => t.id);
   const card = (t) => <TaskCard key={t.id} task={t} me={me} userOf={userOf} onOpen={onOpen} projectColors={projectColors} compact />;
 
   return (
@@ -260,9 +312,9 @@ function TodayList({ tasks, me, partner, userOf, onOpen, projectColors, moods, m
 
       <MoodTodayWidget me={me} partner={partner} moods={moods} legends={moodLegends} />
 
-      {review.length > 0 && <><div className="section-title warn">Ждут твоей проверки · {review.length}</div>{review.map(card)}</>}
-      {overdue.length > 0 && <><div className="section-title bad">Просрочено · {overdue.length}</div>{overdue.map(card)}</>}
-      {today.length > 0 && <><div className="section-title">На сегодня · {today.length}</div>{today.map(card)}</>}
+      {review.length > 0 && <><div className="section-title warn">Ждут твоей проверки · {review.length} <SelectGroup ids={ids(review)} /></div>{review.map(card)}</>}
+      {overdue.length > 0 && <><div className="section-title bad">Просрочено · {overdue.length} <SelectGroup ids={ids(overdue)} /></div>{overdue.map(card)}</>}
+      {today.length > 0 && <><div className="section-title">На сегодня · {today.length} <SelectGroup ids={ids(today)} /></div>{today.map(card)}</>}
 
       {total === 0 && review.length === 0 && (
         <div className="empty">На сегодня ничего нет. Впиши задачу в строку сверху — она встанет на сегодня.</div>
@@ -307,6 +359,7 @@ function AllList({ tasks, me, userOf, onOpen, projectColors }) {
   }, [tasks, closed, filter, project, me.uid]);
 
   const reviewCount = tasks.filter((t) => t.status === 'in_review' && t.authorUid === me.uid).length;
+  useBulkOrder(list.map((t) => t.id));
 
   const F = [
     ['active', 'Активные'],
@@ -339,7 +392,10 @@ function AllList({ tasks, me, userOf, onOpen, projectColors }) {
       ) : list.length === 0 ? (
         <div className="empty">Здесь пусто.</div>
       ) : (
-        list.map((t) => <TaskCard key={t.id} task={t} me={me} userOf={userOf} onOpen={onOpen} projectColors={projectColors} />)
+        <>
+          <div className="bulk-all"><SelectGroup ids={list.map((t) => t.id)} /></div>
+          {list.map((t) => <TaskCard key={t.id} task={t} me={me} userOf={userOf} onOpen={onOpen} projectColors={projectColors} />)}
+        </>
       )}
       {filter === 'done' && closed && closed.length >= 100 && <p className="hint" style={{ textAlign: 'center' }}>Показаны последние 100 закрытых.</p>}
     </div>
