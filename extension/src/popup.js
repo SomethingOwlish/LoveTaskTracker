@@ -4,6 +4,7 @@ import { DEADLINES, QUADRANTS, taskFromText, splitTags, isUsefulUrl, cleanPageTi
 import { collectPageSignals, detectMedia } from './media.js';
 import { detectProduct } from './shop.js';
 import { WISH_TYPES } from '../../src/lib/wishMath.js';
+import { parseTaskList, toTaskData, htmlHasStructure, htmlToListText } from '../../src/lib/taskImport.js';
 import { OAUTH_CLIENT_ID, REDIRECT_URI } from '../config.js';
 
 const $app = document.getElementById('app');
@@ -37,6 +38,7 @@ const ava = (p) => `<span class="ava">${AVATARS[p?.avatar] || AVATARS.owl}</span
 async function readTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   let selection = '';
+  let selectionHtml = '';
   let media = null;
   let product = null;
   if (tab?.id && isUsefulUrl(tab.url)) {
@@ -46,20 +48,25 @@ async function readTab() {
       product = r?.result ? detectProduct(r.result) : null;
     } catch { /* нет доступа к странице */ }
     try {
-      const [r] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => {
-          const el = document.activeElement;
-          if (el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text')) && el.selectionEnd > el.selectionStart) {
-            return el.value.slice(el.selectionStart, el.selectionEnd);
-          }
-          return String(window.getSelection() || '');
-        },
-      });
-      selection = r?.result || '';
+      // во всех фреймах: артефакт Claude живёт во фрейме; берём первый непустой
+      const func = () => {
+        const el = document.activeElement;
+        if (el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text')) && el.selectionEnd > el.selectionStart) {
+          return { text: el.value.slice(el.selectionStart, el.selectionEnd), html: '' };
+        }
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount || !String(sel)) return null;
+        const box = document.createElement('div');
+        for (let i = 0; i < sel.rangeCount; i++) box.appendChild(sel.getRangeAt(i).cloneContents());
+        return { text: String(sel), html: box.innerHTML };
+      };
+      const res = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func })
+        .catch(() => chrome.scripting.executeScript({ target: { tabId: tab.id }, func }));
+      const hit = res.map((r) => r?.result).find((r) => r?.text?.trim());
+      if (hit) { selection = hit.text; selectionHtml = hit.html; }
     } catch { /* страницы Chrome и магазина расширений читать нельзя */ }
   }
-  return { url: tab?.url || '', title: tab?.title || '', selection, media, product };
+  return { url: tab?.url || '', title: tab?.title || '', selection, selectionHtml, media, product };
 }
 
 /* ---------- экран входа ---------- */
@@ -441,16 +448,184 @@ function renderWishForm($panel, { me, partner }, tab) {
   });
 }
 
+/* ---------- список задач ----------
+   Вставили, перетащили или выделили список (например, из артефакта Claude) —
+   разбираем на задачи, показываем, что получится, и создаём пачкой.
+   Правила разбора — в src/lib/taskImport.js. */
+function listTextFrom(sel, html) {
+  return htmlHasStructure(html) ? htmlToListText(html) : (sel || '');
+}
+
+function renderListForm($panel, { me, partner }, text, tab, saved) {
+  const people = [{ key: 'me', name: me.name }, ...(partner ? [{ key: 'partner', name: partner.name }] : [])];
+  const s = { who: saved.who === 'partner' && partner ? 'partner' : 'me', deadline: 'none', skip: new Set(), flip: new Set(), items: [] };
+  const hasLink = isUsefulUrl(tab.url);
+  const chip = (key, label, on) => `<button type="button" class="chip ${on ? 'on' : ''}" data-key="${key}">${esc(label)}</button>`;
+
+  $panel.innerHTML = `
+    <form id="lf" autocomplete="off">
+      <textarea id="l-text" class="input" rows="5" placeholder="Вставь или перетащи сюда список: пункт — задача, подпункты — чеклист, «## заголовок» — проект, @${esc(partner?.name || 'имя')} — кому, «завтра» или «до 20.11» — срок, «!» — важно">${esc(text)}</textarea>
+      <ul class="l-preview" id="l-preview"></ul>
+
+      <div class="field">
+        <span class="lbl">Кому, если не сказано</span>
+        <div class="seg" id="l-who">
+          <button type="button" class="seg-btn ${s.who === 'me' ? 'on' : ''}" data-who="me">${ava(me)} Себе</button>
+          ${partner ? `<button type="button" class="seg-btn ${s.who === 'partner' ? 'on' : ''}" data-who="partner">${ava(partner)} ${esc(partner.dative)}</button>` : ''}
+        </div>
+      </div>
+      <div class="field">
+        <span class="lbl">Срок, если не сказано</span>
+        <div class="chips" id="l-dl">${Object.entries(DEADLINES).map(([k, v]) => chip(k, v.label, k === s.deadline)).join('')}</div>
+      </div>
+      ${hasLink ? '<label class="row attach"><input type="checkbox" id="l-attach" /> <span>Ссылку на страницу — во все задачи</span></label>' : ''}
+
+      <button type="submit" class="btn btn-primary" id="l-save">Создать</button>
+      <p class="error" id="l-err" hidden></p>
+    </form>`;
+
+  const $ = (id) => document.getElementById(id);
+  const area = $('l-text');
+  const whoOf = (t, i) => {
+    const w = t.who || s.who;
+    return s.flip.has(i) && partner ? (w === 'me' ? 'partner' : 'me') : w;
+  };
+  const chosen = () => s.items.map((t, i) => [t, i]).filter(([, i]) => !s.skip.has(i));
+  const fmt = (d) => d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+
+  const draw = () => {
+    const dl = DEADLINES[s.deadline].date();
+    $('l-preview').innerHTML = s.items.map((t, i) => {
+      const off = s.skip.has(i);
+      const p = whoOf(t, i) === 'partner' && partner ? partner : me;
+      const d = t.deadline || dl;
+      return `<li class="${off ? 'off' : ''}" data-i="${i}">
+        <button type="button" class="l-check ${off ? '' : 'on'}" data-act="skip" aria-label="${off ? 'Добавить' : 'Не добавлять'}">${off ? '' : '✓'}</button>
+        <span class="l-title">${t.important ? '<b class="l-imp">!</b>' : ''}${esc(t.title)}</span>
+        ${t.projectTags[0] ? `<span class="l-chip">${esc(t.projectTags[0])}</span>` : ''}
+        ${t.checklist.length ? `<span class="l-chip">☑ ${t.checklist.length}</span>` : ''}
+        ${d ? `<span class="l-chip">${esc(fmt(d))}</span>` : ''}
+        ${partner ? `<button type="button" class="l-who" data-act="who" title="Для: ${esc(p.name)} — нажми, чтобы сменить">${ava(p)}</button>` : ''}
+      </li>`;
+    }).join('') || (area.value.trim() ? '<li class="dim">Не нашла задач в этом тексте.</li>' : '');
+    const n = chosen().length;
+    $('l-save').disabled = !n;
+    $('l-save').innerHTML = n > 1 ? `Создать ${n} <kbd>⌘↵</kbd>` : 'Создать <kbd>⌘↵</kbd>';
+  };
+  const reparse = () => {
+    s.items = parseTaskList(area.value, { people });
+    s.skip = new Set();
+    s.flip = new Set();
+    draw();
+  };
+
+  // вставка и перетаскивание: из HTML восстанавливаем маркеры и вложенность
+  const insert = (chunk) => {
+    const a = area.selectionStart ?? area.value.length;
+    const b = area.selectionEnd ?? area.value.length;
+    const before = area.value.slice(0, a);
+    const glue = before && !before.endsWith('\n') && chunk.includes('\n') ? '\n' : '';
+    area.value = before + glue + chunk + area.value.slice(b);
+    reparse();
+  };
+  area.addEventListener('input', reparse);
+  area.addEventListener('paste', (e) => {
+    const html = e.clipboardData?.getData('text/html');
+    if (!htmlHasStructure(html)) return;
+    e.preventDefault();
+    insert(htmlToListText(html));
+  });
+  $panel.addEventListener('dragover', (e) => { e.preventDefault(); area.classList.add('drop'); });
+  $panel.addEventListener('dragleave', (e) => { if (!$panel.contains(e.relatedTarget)) area.classList.remove('drop'); });
+  $panel.addEventListener('drop', (e) => {
+    area.classList.remove('drop');
+    const chunk = listTextFrom(e.dataTransfer.getData('text/plain'), e.dataTransfer.getData('text/html'));
+    if (!chunk) return;
+    e.preventDefault();
+    insert(chunk);
+  });
+
+  $('l-preview').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]');
+    const li = e.target.closest('[data-i]');
+    if (!b || !li) return;
+    const i = +li.dataset.i;
+    const set = b.dataset.act === 'skip' ? s.skip : s.flip;
+    set.has(i) ? set.delete(i) : set.add(i);
+    draw();
+  });
+  $('l-who').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-who]');
+    if (!b) return;
+    s.who = b.dataset.who;
+    $('l-who').querySelectorAll('[data-who]').forEach((x) => x.classList.toggle('on', x === b));
+    prefs.set({ who: s.who });
+    draw();
+  });
+  $('l-dl').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-key]');
+    if (!b) return;
+    s.deadline = b.dataset.key;
+    $('l-dl').querySelectorAll('[data-key]').forEach((x) => x.classList.toggle('on', x === b));
+    draw();
+  });
+  $('lf').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('lf').requestSubmit(); }
+  });
+
+  $('lf').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const list = chosen();
+    if (!list.length) return;
+    const err = $('l-err');
+    err.hidden = true;
+    const btn = $('l-save');
+    btn.disabled = true;
+    btn.textContent = 'Сохраняю…';
+    const dl = DEADLINES[s.deadline].date();
+    const link = $('l-attach')?.checked ? tab.url : null;
+    const made = [];
+    try {
+      // по одной: если что-то упадёт, уже созданные останутся и их можно отменить
+      for (const [t, i] of list) {
+        const data = toTaskData({ ...t, who: whoOf(t, i) }, { me, partner, authorUid: me.uid, defaults: { deadline: dl, link } });
+        data.deadline = data.deadline ? new Date(data.deadline).toISOString() : null;
+        made.push(await call('createTask', { data }));
+      }
+      const names = made.map((r) => r.title);
+      renderDone({
+        heading: made.length === 1 ? 'Задача создана' : `Создано задач: ${made.length}`,
+        title: names.length > 3 ? `${names.slice(0, 3).join(', ')} и ещё ${names.length - 3}` : names.join(', '),
+        taskId: made.length === 1 ? made[0].id : null,
+        undo: () => Promise.all(made.map((r) => call('undoTask', { id: r.id, notifId: r.notifId }))),
+      });
+    } catch (ex) {
+      if (ex.code === 'NOT_SIGNED_IN') return renderSignIn(ex.message);
+      err.textContent = `Не сохранилось${made.length ? ` (создано ${made.length} из ${list.length})` : ''}: ${ex.message}`;
+      err.hidden = false;
+      btn.disabled = false;
+      btn.innerHTML = 'Создать <kbd>⌘↵</kbd>';
+    }
+  });
+
+  reparse();
+}
+
 /* ---------- общий каркас: шапка, вкладки, подвал ---------- */
-function renderMain(status, tab, saved) {
+function renderMain(status, tab, saved, pending = null) {
   const { me } = status;
   const { media, product } = tab;
-  // по умолчанию: фильм/игра — Мурмур, товар — вишлист; если что-то выделено — задача
+  // текст для вкладки «Списком»: из меню «Разобрать в задачи» или выделение
+  const listText = pending ?? listTextFrom(tab.selection, tab.selectionHtml);
+  // сама выбирается, только если выделен именно список (пункты или заголовки), а не абзацы
+  const isList = !!pending || ((htmlHasStructure(tab.selectionHtml) || /^\s*(?:[-*+•]|\d{1,3}[.)])\s/m.test(tab.selection))
+    && parseTaskList(listText).length > 1);
+  // по умолчанию: список — «Списком», фильм/игра — Мурмур, товар — вишлист; если что-то выделено — задача
   const picked = !tab.selection.trim();
-  let current = picked && media ? 'murmur' : picked && product ? 'wish' : 'task';
-  const TABS = [...(media ? [['murmur', '🎬 Мурмур']] : []), ['wish', '🎁 Вишлист'], ['task', '✓ Задача']];
-  const HEAD = { murmur: 'В Мурмур', wish: 'В вишлист', task: 'Новая задача' };
-  const FOCUS = { murmur: 'm-title', wish: 'w-title', task: 'title' };
+  let current = isList ? 'list' : picked && media ? 'murmur' : picked && product ? 'wish' : 'task';
+  const TABS = [...(media ? [['murmur', '🎬 Мурмур']] : []), ['wish', '🎁 Вишлист'], ['task', '✓ Задача'], ['list', '☰ Списком']];
+  const HEAD = { murmur: 'В Мурмур', wish: 'В вишлист', task: 'Новая задача', list: 'Задачи списком' };
+  const FOCUS = { murmur: 'm-title', wish: 'w-title', task: 'title', list: 'l-text' };
   $app.innerHTML = `
     <header class="head">
       ${ava(me)}
@@ -463,6 +638,7 @@ function renderMain(status, tab, saved) {
     <section id="p-murmur" hidden></section>
     <section id="p-wish" hidden></section>
     <section id="p-task" hidden></section>
+    <section id="p-list" hidden></section>
     <footer class="foot">
       <span class="dim">${esc(me.name)}</span>
       <button type="button" class="link-btn" id="signout">выйти</button>
@@ -472,16 +648,17 @@ function renderMain(status, tab, saved) {
   renderTaskForm($('p-task'), status, tab, saved);
   if (media) renderMurmurForm($('p-murmur'), status, media);
   renderWishForm($('p-wish'), status, tab);
+  renderListForm($('p-list'), status, isList ? listText : '', tab, saved);
 
   const show = (name) => {
     current = name;
-    ['task', 'murmur', 'wish'].forEach((k) => { $(`p-${k}`).hidden = name !== k; });
+    ['task', 'murmur', 'wish', 'list'].forEach((k) => { $(`p-${k}`).hidden = name !== k; });
     $('heading').textContent = HEAD[name];
     $app.querySelectorAll('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
     const input = $(FOCUS[name]);
     autoGrow(input); // в скрытой панели высоту не посчитать — считаем при показе
     input.focus();
-    input.select();
+    if (name !== 'list') input.select();
   };
   $app.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
   $('open').addEventListener('click', () => { call('openApp', { tab: { murmur: 'murmur', wish: 'wishlist' }[current] }); window.close(); });
@@ -550,14 +727,31 @@ async function syncUi(cached) {
 }
 
 /* ---------- старт ---------- */
+// Выделение, отправленное из меню «Разобрать в задачи» (живёт пару минут).
+async function takePendingList() {
+  try {
+    const { pendingList: p } = await chrome.storage.session.get('pendingList');
+    if (!p) return null;
+    await chrome.storage.session.remove('pendingList');
+    if (Date.now() - p.at > 2 * 60 * 1000) return null;
+    return { text: listTextFrom(p.text, p.html), url: p.url };
+  } catch {
+    return null;
+  }
+}
+
 async function start({ blank = false } = {}) {
   const saved = await prefs.get();
   applyUi(saved.ui);
   try {
-    const [status, tab] = await Promise.all([call('status'), readTab()]);
+    const [status, tab, pending] = await Promise.all([call('status'), readTab(), blank ? null : takePendingList()]);
     if (!status.me) return renderSignIn();
     syncUi(saved.ui);
-    renderMain(status, blank ? { ...tab, title: '', selection: '', media: null, product: null } : tab, saved);
+    // отдельное окошко (если панель не открылась): активная вкладка — сама форма, адрес берём из меню
+    const t = pending && new URLSearchParams(location.search).has('list')
+      ? { ...tab, url: pending.url, title: '', selection: '', selectionHtml: '', media: null, product: null }
+      : tab;
+    renderMain(status, blank ? { ...t, title: '', selection: '', selectionHtml: '', media: null, product: null } : t, saved, pending?.text ?? null);
   } catch (e) {
     renderSignIn(e.message);
   }
