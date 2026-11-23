@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sessionRecords, sessionPreview, summarize, mergePulls } from '../src/lib/gacha.js';
+import { sessionRecords, sessionPreview, summarize, mergePulls, editTop, classifyTops } from '../src/lib/gacha.js';
 import { applyDrops, mergeCatalog, filterCatalog } from '../src/lib/gachaCatalog.js';
 import genshin from '../src/gacha/genshin.json';
 import hsr from '../src/gacha/hsr.json';
@@ -15,7 +15,7 @@ describe('sessionRecords', () => {
     const { records } = sessionRecords({ game: 'hsr', pool: 'char', count: 10, base: 1, drops: [{ n: 'Kafka', r: 5, k: 'c' }, { n: 'Конус', r: 4, k: 'w', at: 3 }] });
     expect(records.map((r) => r.c)).toEqual([2, 1, 6, 1]);
     expect(records[3].n).toBe('Kafka');
-    expect(sessionPreview(records, 70, 5)).toEqual({ tops: [{ n: 'Kafka', p: 80 }], pityAfter: 0 });
+    expect(sessionPreview(records, 70, 5)).toMatchObject({ tops: [{ n: 'Kafka', p: 80 }], pityAfter: 0 });
     const sum = summarize('hsr', mergePulls([], records).pulls);
     expect(sum.char.tops[0].p).toBe(10);
   });
@@ -28,6 +28,58 @@ describe('sessionRecords', () => {
     expect(sessionRecords({ game: 'hsr', pool: 'char', count: 1, drops: [{ n: 'a', r: 5 }, { n: 'b', r: 4 }] }).error).toBeTruthy();
     expect(sessionRecords({ game: 'hsr', pool: 'char', count: 5, drops: [{ n: 'a', r: 5, at: 9 }] }).error).toBeTruthy();
     expect(sessionRecords({ game: 'hsr', pool: 'char', count: 5, drops: [{ n: 'a', r: 5, at: 2 }, { n: 'b', r: 4, at: 2 }] }).error).toBeTruthy();
+  });
+});
+
+describe('порядок в сессии', () => {
+  const names = (records) => records.filter((r) => r.n).map((r) => r.n);
+  it('без номеров: список идёт по порядку выпадения', () => {
+    const { records } = sessionRecords({ game: 'hsr', pool: 'char', count: 10, base: 1, drops: [{ n: 'Жемчуг', r: 5 }, { n: 'Аха', r: 5 }] });
+    expect(names(records)).toEqual(['Жемчуг', 'Аха']);
+  });
+  it('«№1 — последняя»: номера и список считаются с конца', () => {
+    const a = sessionRecords({ game: 'hsr', pool: 'char', count: 10, base: 1, order: 'last', drops: [{ n: 'Аха', r: 5 }, { n: 'Жемчуг', r: 5 }] });
+    expect(names(a.records)).toEqual(['Жемчуг', 'Аха']);
+    const b = sessionRecords({ game: 'hsr', pool: 'char', count: 10, base: 1, order: 'last', drops: [{ n: 'Аха', r: 5, at: 1 }, { n: 'Жемчуг', r: 5, at: 8 }] });
+    const pv = sessionPreview(b.records, 0, 5);
+    expect(pv.seq.map((d) => [d.n, d.at])).toEqual([['Жемчуг', 3], ['Аха', 10]]);
+    expect(pv.tops).toEqual([{ n: 'Жемчуг', p: 3 }, { n: 'Аха', p: 7 }]);
+  });
+});
+
+describe('правка топ-дропа', () => {
+  const sess = () => [
+    ...sessionRecords({ game: 'hsr', pool: 'char', count: 10, base: 1, drops: [{ n: 'Kafka', r: 5, at: 6 }, { n: 'Конус', r: 4, k: 'w', at: 3 }] }).records,
+    ...sessionRecords({ game: 'hsr', pool: 'char', count: 20, base: 2, drops: [{ n: 'Аха', r: 5, at: 15 }] }).records,
+  ];
+  const tops = (pulls) => summarize('hsr', mergePulls([], pulls).pulls).char;
+  it('позже: двигается только этот дроп', () => {
+    const pulls = sess();
+    const id = pulls.find((p) => p.n === 'Kafka').i;
+    const r = editTop(pulls, 'hsr', id, { pity: 40 });
+    const s = tops(r.pulls);
+    expect(s.tops.map((t) => t.p)).toEqual([40, 19]);
+    expect(s.pity).toBe(5);
+  });
+  it('раньше: урезаем пустые крутки перед ним, 4★ остаётся', () => {
+    const pulls = sess();
+    const id = pulls.find((p) => p.n === 'Kafka').i;
+    const r = editTop(pulls, 'hsr', id, { pity: 4 });
+    expect(tops(r.pulls).tops.map((t) => t.p)).toEqual([4, 19]);
+    expect(r.pulls.some((p) => p.n === 'Конус')).toBe(true);
+    expect(editTop(pulls, 'hsr', id, { pity: 1 }).error).toBeTruthy(); // перед ним 4★
+  });
+  it('имя и запрет для импорта', () => {
+    const pulls = sess();
+    const id = pulls.find((p) => p.n === 'Аха').i;
+    expect(editTop(pulls, 'hsr', id, { n: ' Жемчуг ' }).pulls.find((p) => p.i === id).n).toBe('Жемчуг');
+    const imported = [{ i: '100', t: '2026-01-01 10:00:00', n: 'Kafka', r: 5, k: 'c', g: '11' }];
+    expect(editTop(imported, 'hsr', '100', { pity: 5 }).error).toBeTruthy();
+  });
+  it('поправки «выиграла 50/50» и «гарант»', () => {
+    const t = [{ i: 'a', n: 'Himeko' }, { i: 'b', n: 'Kafka' }, { i: 'c', n: 'Аха' }];
+    const r = classifyTops(t, { stdNames: ['Himeko'], overrides: { b: 'fifty', c: 'guar' } });
+    expect(r.list.map((x) => x.res)).toEqual(['lost', 'won', 'guar']);
   });
 });
 

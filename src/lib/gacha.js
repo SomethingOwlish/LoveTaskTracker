@@ -221,7 +221,9 @@ export function summarize(game, pulls) {
 
 // Разметка топ-дропов ивентовой копилки: 'won' — выиграли 50/50,
 // 'lost' — выпал стандартный, 'guar' — пришёл по гаранту после проигрыша.
-// stdNames — стандартные имена; overrides — ручные поправки { id: 'won'|'lost' }.
+// stdNames — стандартные имена; overrides — ручные поправки { id: значение }:
+//   'lost' — стандартный (проиграли), 'won' — лимитный (выигрыш или гарант — по истории),
+//   'fifty' — точно выиграли 50/50, 'guar' — точно пришёл по гаранту.
 export function classifyTops(tops, { stdNames = [], guarantee = true, overrides = {} } = {}) {
   const std = new Set(stdNames.map((n) => n.toLowerCase().trim()));
   let guaranteed = false;
@@ -231,7 +233,8 @@ export function classifyTops(tops, { stdNames = [], guarantee = true, overrides 
     const isStd = ov ? ov === 'lost' : std.has(String(t.n).toLowerCase().trim());
     let res;
     if (isStd) { res = 'lost'; lost += 1; guaranteed = guarantee; }
-    else if (guaranteed) { res = 'guar'; guar += 1; guaranteed = false; }
+    else if (ov === 'fifty') { res = 'won'; won += 1; guaranteed = false; }
+    else if (ov === 'guar' || guaranteed) { res = 'guar'; guar += 1; guaranteed = false; }
     else { res = 'won'; won += 1; }
     return { ...t, res };
   });
@@ -287,7 +290,9 @@ export function chunkPulls(pulls, size = CHUNK) {
 // чтобы pity считался верно. drops: [{ n, r, k, at? }] — at: номер крутки
 // внутри сессии (1..N); без номера редкие ставим в конец сессии.
 // Подряд идущие «пустые» крутки сжимаются в одну запись с c = сколько.
-export function sessionRecords({ game, pool, count, drops = [], time, base = Date.now() }) {
+// order: 'first' — №1 и порядок списка = самая ранняя крутка (как выпадало);
+//        'last' — №1 и первая строка списка = самая свежая (как в истории игры).
+export function sessionRecords({ game, pool, count, drops = [], time, base = Date.now(), order = 'first' }) {
   const g = GAMES[game];
   const P = g.pools[pool];
   if (!P) return { error: 'Нет такого баннера' };
@@ -295,18 +300,23 @@ export function sessionRecords({ game, pool, count, drops = [], time, base = Dat
   if (!Number.isInteger(n) || n < 1 || n > 1000) return { error: 'Сколько круток — от 1 до 1000' };
   const list = drops.filter((d) => d && String(d.n || '').trim());
   if (list.length > n) return { error: `Выпало больше (${list.length}), чем круток (${n})` };
+  const fromLast = order === 'last';
+  const noAt = (d) => d.at === '' || d.at == null;
   const at = new Map();
   for (const d of list) {
-    const p = Number(d.at);
-    if (d.at === '' || d.at == null) continue;
-    if (!Number.isInteger(p) || p < 1 || p > n) return { error: `Номер крутки у «${d.n}» — от 1 до ${n}` };
-    if (at.has(p)) return { error: `Две награды на крутке №${p}` };
+    if (noAt(d)) continue;
+    const q = Number(d.at);
+    if (!Number.isInteger(q) || q < 1 || q > n) return { error: `Номер крутки у «${d.n}» — от 1 до ${n}` };
+    const p = fromLast ? n + 1 - q : q;
+    if (at.has(p)) return { error: `Две награды на крутке №${q}` };
     at.set(p, d);
   }
-  // без номера — с конца, на свободные места
+  // без номера — в конец сессии на свободные места, сохраняя порядок списка:
+  // самая свежая из них — последняя строка (или первая, если считаем с последней)
+  const rest = list.filter(noAt);
+  if (!fromLast) rest.reverse();
   let free = n;
-  for (const d of list) {
-    if (d.at !== '' && d.at != null) continue;
+  for (const d of rest) {
     while (at.has(free)) free -= 1;
     at.set(free, d);
   }
@@ -327,12 +337,66 @@ export function sessionRecords({ game, pool, count, drops = [], time, base = Dat
 }
 
 // Сколько топ-дропов и на какой крутке (общий pity) они выпадут после сессии.
+// seq — все награды по порядку: { n, r, at: крутка в сессии, p?: pity у топ-дропа }.
 export function sessionPreview(records, currentPity, top) {
   let pity = currentPity;
+  let at = 0;
   const tops = [];
+  const seq = [];
   for (const r of records) {
     pity += r.c || 1;
+    at += r.c || 1;
+    if (r.n) seq.push({ n: r.n, r: r.r, at, ...(r.r >= top ? { p: pity } : {}) });
     if (r.r >= top) { tops.push({ n: r.n, p: pity }); pity = 0; }
   }
-  return { tops, pityAfter: pity };
+  return { tops, pityAfter: pity, seq };
+}
+
+/* ---------------- Правка топ-дропа ---------------- */
+
+// Поменять имя и/или pity у выпавшего. pity двигаем только у ручных записей:
+// у топ-записи меняется «сколько круток она представляет» (c), а если надо
+// раньше — урезаем ручные пустые крутки перед ней. Остальные топ-дропы и
+// текущий счётчик не трогаем — меняется только общее число круток.
+// Возвращает { pulls } (новый массив) или { error }.
+export function editTop(pulls, game, id, { n, pity } = {}) {
+  const g = GAMES[game];
+  const out = pulls.map((p) => ({ ...p }));
+  const rec = out.find((p) => p.i === id);
+  if (!rec) return { error: 'Запись не нашлась — обнови страницу' };
+  if (n != null) {
+    const name = String(n).trim();
+    if (!name) return { error: 'Имя не может быть пустым' };
+    rec.n = name;
+  }
+  if (pity == null || pity === '') return { pulls: out };
+  const pool = poolOf(game, rec.g);
+  const P = g.pools[pool];
+  const want = Number(pity);
+  if (!Number.isInteger(want) || want < 1 || want > P.hard) return { error: `Номер крутки — от 1 до ${P.hard}` };
+  const list = out.filter((p) => poolOf(game, p.g) === pool).sort(cmpPull);
+  const idx = list.indexOf(rec);
+  let start = idx; // первая запись после предыдущего топ-дропа
+  while (start > 0 && list[start - 1].r < g.top) start -= 1;
+  const cur = list.slice(start, idx + 1).reduce((s, p) => s + (p.c || 1), 0);
+  if (want === cur) return { pulls: out };
+  const manual = (p) => p.i[0] === 'm';
+  if (!manual(rec)) return { error: 'Номер крутки меняется только у записей, внесённых вручную: импорт из игры и так точный' };
+  if (want > cur) { rec.c = (rec.c || 1) + (want - cur); return { pulls: out }; }
+  let need = cur - want;
+  const own = Math.min((rec.c || 1) - 1, need);
+  rec.c = (rec.c || 1) - own;
+  need -= own;
+  const drop = new Set();
+  for (let j = idx - 1; j >= start && need > 0; j -= 1) {
+    const p = list[j];
+    if (!manual(p)) break; // дальше импорт — его не трогаем
+    if (p.n) continue; // 4★ с именем остаётся, просто сдвигается
+    const take = Math.min(p.c || 1, need);
+    p.c = (p.c || 1) - take;
+    need -= take;
+    if (!p.c) drop.add(p.i);
+  }
+  if (need > 0) return { error: `Раньше ${want + need}-й не выйдет: перед ним есть другие записи` };
+  return { pulls: out.filter((p) => !drop.has(p.i)) };
 }
