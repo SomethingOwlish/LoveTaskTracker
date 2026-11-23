@@ -9,7 +9,7 @@ import {
   collection, doc, getDocs, setDoc, writeBatch, onSnapshot, query, where, serverTimestamp, deleteField,
 } from 'firebase/firestore';
 import { reportError } from './toast';
-import { GAMES, summarize, chunkPulls, poolOf, mergePulls, fromHoyo, fromEndfield } from './gacha';
+import { GAMES, summarize, chunkPulls, poolOf, mergePulls, fromHoyo, fromEndfield, editTop } from './gacha';
 
 const key = (uid, game) => `${uid}_${game}`;
 
@@ -64,6 +64,27 @@ export async function addManualPull(uid, game, rec) {
 export async function removePull(uid, game, id) {
   const { pulls, chunks } = await loadGachaLog(uid, game);
   await saveGachaLog(uid, game, pulls.filter((p) => p.i !== id), chunks);
+}
+
+// Правка выпавшего: имя и/или номер крутки. В «Последних крутках» тоже
+// переименовываем, чтобы список совпадал с историей.
+export async function editTopPull(uid, game, id, { n, pity, oldName }, recent = []) {
+  const { pulls, chunks } = await loadGachaLog(uid, game);
+  const r = editTop(pulls, game, id, { n, pity });
+  if (r.error) throw new Error(r.error);
+  const extra = {};
+  if (n != null && oldName != null && n.trim() !== oldName) {
+    let hit = false;
+    const next = recent.map((s) => {
+      if (hit || !(s.ids || []).includes(id)) return s;
+      const k = s.drops.findIndex((d) => d.n === oldName);
+      if (k < 0) return s;
+      hit = true;
+      return { ...s, drops: s.drops.map((d, j) => (j === k ? { ...d, n: n.trim() } : d)) };
+    });
+    if (hit) extra.recent = next;
+  }
+  await saveGachaLog(uid, game, r.pulls, chunks, extra);
 }
 
 /* ---------------- Импорт через воркер ---------------- */

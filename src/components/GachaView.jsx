@@ -11,7 +11,7 @@ import { CharsSection, useCatalog } from './GachaChars';
 import { STATS, GEAR_LEVELS, emptyChar, charReadiness, teamReport, matsLeft, grade } from '../lib/gachaPlan';
 import {
   subscribeGachaSummary, importGacha, ExpiredLinkError, setGachaOverride, saveGachaMeta, addManualPull, removePull,
-  loadGachaLog, subscribeRoster, saveRoster, addSession, removeSession,
+  loadGachaLog, editTopPull, subscribeRoster, saveRoster, addSession, removeSession,
 } from '../lib/gachaDb';
 
 const SECTIONS = [['chars', 'Герои'], ['pulls', 'Крутки'], ['plan', 'Развитие'], ['teams', 'Отряды']];
@@ -197,7 +197,8 @@ function PullsSection({ uid, game, mine, roster, save }) {
       {sheet === 'manual' && <ManualSheet uid={uid} game={game} sum={sum} onClose={() => setSheet(null)} />}
       {sheet === 'std' && <StdSheet uid={uid} game={game} sum={sum} onClose={() => setSheet(null)} />}
       {sheet?.top && (
-        <TopSheet uid={uid} game={game} mine={mine} top={sheet.top} pool={sheet.pool} override={overrides[sheet.top.i]} onClose={() => setSheet(null)} />
+        <TopSheet uid={uid} game={game} mine={mine} top={sheet.top} pool={sheet.pool} override={overrides[sheet.top.i]}
+          recent={sum.recent || []} names={(catalog || []).filter((c) => c.r >= G.top).map((c) => c.name)} onClose={() => setSheet(null)} />
       )}
       {sheet?.history && <HistorySheet uid={uid} game={game} pool={sheet.history} onClose={() => setSheet(null)} />}
     </div>
@@ -374,25 +375,62 @@ function StdSheet({ uid, game, sum, onClose }) {
   );
 }
 
-function TopSheet({ uid, game, mine, top, pool, override, onClose }) {
-  const P = GAMES[game].pools[pool];
+function TopSheet({ uid, game, mine, top, pool, override, recent, names, onClose }) {
+  const G = GAMES[game];
+  const P = G.pools[pool];
+  const manual = top.i.startsWith('m');
+  const [name, setName] = useState(top.n);
+  const [pity, setPity] = useState(String(top.p));
+  const [saving, setSaving] = useState(false);
   const set = (v) => setGachaOverride(uid, game, top.i, v).then(onClose, reportError);
   const del = () => removePull(uid, game, top.i).then(() => { toast('Удалила'); onClose(); }, reportError);
+  const nameChanged = name.trim() && name.trim() !== top.n;
+  const pityChanged = manual && pity.trim() !== String(top.p);
+  const saveEdit = async () => {
+    setSaving(true);
+    try {
+      await editTopPull(uid, game, top.i, { n: nameChanged ? name : null, pity: pityChanged ? pity.trim() : null, oldName: top.n }, recent);
+      toast('Поправила');
+      onClose();
+    } catch (e) { toastError(e.message || String(e)); } finally { setSaving(false); }
+  };
+  // старая поправка 'won' («лимитный») подсвечивает то, что вышло по истории
+  const pick = override === 'won' ? (top.res === 'guar' ? 'guar' : 'fifty') : override || null;
+  const chips = [[null, 'Автоматически'], ['fifty', 'Выиграла 50/50'], ...(P.guarantee ? [['guar', 'Гарант']] : []), ['lost', 'Проиграла (стандартный)']];
   return (
-    <Sheet title={top.n} onClose={onClose}>
+    <Sheet title={top.n} onClose={onClose}
+      footer={mine && (nameChanged || pityChanged)
+        ? <button className="btn btn-accent btn-block" disabled={saving} onClick={saveEdit}>{saving ? <i className="fa-solid fa-spinner fa-spin" /> : 'Сохранить'}</button>
+        : null}>
       <p>Выпал на <b>{top.p}</b>-й крутке{top.t ? `, ${top.t.slice(0, 16)}` : ''}{top.b ? ` · баннер «${top.b}»` : ''}.</p>
       {top.res && <p>Итог: <span className={`gc-res ${RES[top.res][1]}`}>{RES[top.res][0]}</span>{override ? ' (поправлено вручную)' : ''}</p>}
       {mine && P.fifty && (
         <>
-          <div className="section-title">Поправить 50/50</div>
+          <div className="section-title">Как выпал</div>
           <div className="chips">
-            <button className={`chip pick ${!override ? 'on' : ''}`} onClick={() => set(null)}>Автоматически</button>
-            <button className={`chip pick ${override === 'won' ? 'on' : ''}`} onClick={() => set('won')}>Это лимитный</button>
-            <button className={`chip pick ${override === 'lost' ? 'on' : ''}`} onClick={() => set('lost')}>Это стандартный</button>
+            {chips.map(([v, label]) => (
+              <button key={label} className={`chip pick ${pick === v ? 'on' : ''}`} onClick={() => set(v)}>{label}</button>
+            ))}
+          </div>
+          <p className="hint">«Автоматически» — по списку стандартных и предыдущим дропам. Поправка влияет и на следующие: после проигрыша следующий считается гарантом.</p>
+        </>
+      )}
+      {mine && (
+        <>
+          <div className="section-title">Поправить запись</div>
+          <div className="field"><label>Кто выпал</label>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} list="gc-top-names" />
+            <datalist id="gc-top-names">{names.map((n) => <option key={n} value={n} />)}</datalist>
+          </div>
+          <div className="field"><label>На какой крутке (pity)</label>
+            <input className="input" inputMode="numeric" value={pity} disabled={!manual} onChange={(e) => setPity(e.target.value)} placeholder={`1–${P.hard}`} />
+            <p className="hint">{manual
+              ? 'Меняется только этот дроп: остальные и текущий счётчик останутся как были.'
+              : 'Загружено из игры — номер точный, его не меняем.'}</p>
           </div>
         </>
       )}
-      {mine && top.i.startsWith('m') && <button className="btn btn-sm btn-ghost" style={{ marginTop: 16 }} onClick={del}><i className="fa-solid fa-trash" /> Удалить ручную запись</button>}
+      {mine && manual && <button className="btn btn-sm btn-ghost" style={{ marginTop: 16 }} onClick={del}><i className="fa-solid fa-trash" /> Удалить ручную запись</button>}
     </Sheet>
   );
 }
@@ -662,6 +700,8 @@ function SessionSheet({ uid, game, sum, roster, save, onClose }) {
   const [pityNow, setPityNow] = useState('');
   const [mark, setMark] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [order, setOrderState] = useState(() => loadPref('gachaOrder', 'first'));
+  const setOrder = (v) => { setOrderState(v); savePref('gachaOrder', v); };
   const P = G.pools[pool] || G.pools[Object.keys(G.pools)[0]];
   const weaponPool = /weapon/i.test(pool);
   const current = sum.pools?.[pool]?.pity || 0;
@@ -672,7 +712,7 @@ function SessionSheet({ uid, game, sum, roster, save, onClose }) {
   const setDrop = (i, patch) => setDrops((d) => d.map((x, j) => (j === i ? { ...x, ...patch } : x)));
 
   let res;
-  if (mode === 'session') res = sessionRecords({ game, pool, count, drops });
+  if (mode === 'session') res = sessionRecords({ game, pool, count, drops, order });
   else {
     const n = Number(pityNow);
     if (!Number.isInteger(n) || n < 0 || n >= P.hard) res = { error: `pity — от 0 до ${P.hard - 1}` };
@@ -732,6 +772,8 @@ function SessionSheet({ uid, game, sum, roster, save, onClose }) {
             </div>
           </div>
           <div className="field"><label>Что выпало ({G.top - 1}★ и {G.top}★, остальное не важно)</label>
+            <Seg className="mb seg-sm" value={order} onChange={setOrder}
+              options={[['first', '№1 — первая крутка'], ['last', '№1 — последняя']]} />
             {drops.map((d, i) => (
               <div key={i} className="gc-drop">
                 <span className={`gc-drop-r r${d.r >= G.top ? 'top' : 'mid'}`}>{d.r}★</span>
@@ -748,7 +790,10 @@ function SessionSheet({ uid, game, sum, roster, save, onClose }) {
               <button className="btn btn-sm" onClick={() => addDrop(G.top)}><i className="fa-solid fa-plus" /> {G.top}★</button>
               <button className="btn btn-sm" onClick={() => addDrop(G.top - 1)}><i className="fa-solid fa-plus" /> {G.top - 1}★</button>
             </div>
-            <p className="hint">«№» — на какой по счёту крутке этой сессии выпало. Не помнишь — оставь пустым, посчитаю как последнюю.</p>
+            <p className="hint">{order === 'first'
+              ? 'Пиши по порядку, как выпадало: сверху — самое раннее. «№» — номер крутки, считая с первой.'
+              : 'Пиши как в истории игры: сверху — самое свежее. «№» — номер, считая с последней крутки назад.'}
+              {' '}Без номера — поставлю в конец сессии в том же порядке.</p>
           </div>
           {filled.some((d) => d.k === 'c') && (
             <label className="gc-check"><input type="checkbox" checked={mark} onChange={(e) => setMark(e.target.checked)} /> Отметить выпавших персонажей как «есть» (повтор → +1 {CONS_ONE[game]})</label>
@@ -758,10 +803,17 @@ function SessionSheet({ uid, game, sum, roster, save, onClose }) {
 
       {res.error && (mode === 'pity' ? pityNow : true) && <p className="hint bad">{res.error}</p>}
       {preview && (
-        <p className="hint">
-          После записи: <b>{preview.pityAfter}</b> / {P.hard}
-          {preview.tops.map((t) => <span key={t.n + t.p}> · {t.n} на {t.p}-й</span>)}
-        </p>
+        <div className="hint">
+          {preview.seq.length > 1 && (
+            <p style={{ margin: '0 0 4px' }}>Выпадало так: {preview.seq.map((d, i) => (
+              <span key={i}>{i ? ' → ' : ''}<b className={`gc-drop-n r${d.r >= G.top ? 'top' : 'mid'}`} style={{ margin: 0 }}>{d.n}</b> (№{order === 'last' ? Number(count) + 1 - d.at : d.at})</span>
+            ))}</p>
+          )}
+          <p style={{ margin: 0 }}>
+            После записи: <b>{preview.pityAfter}</b> / {P.hard}
+            {preview.tops.map((t) => <span key={t.n + t.p}> · {t.n} на {t.p}-й</span>)}
+          </p>
+        </div>
       )}
     </Sheet>
   );
