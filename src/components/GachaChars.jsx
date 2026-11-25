@@ -5,7 +5,7 @@ import { toast, reportError } from '../lib/toast';
 import { GAMES } from '../lib/gacha';
 import { emptyChar } from '../lib/gachaPlan';
 import {
-  loadCatalog, mergeCatalog, filterCatalog, ELEMENTS, WEAPONS, elementOf, guideLink, customChar,
+  loadCatalog, mergeCatalog, filterCatalog, ELEMENTS, WEAPONS, elementOf, guideLink, customChar, nameHints,
 } from '../lib/gachaCatalog';
 
 const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
@@ -36,6 +36,43 @@ export function CharImg({ c, game, size = 64 }) {
     );
   }
   return <img className="gc-img" src={c.img} alt="" loading="lazy" width={size} height={size} onError={() => setBad(true)} referrerPolicy="no-referrer" />;
+}
+
+// Поле имени с подсказками из каталога. <datalist> на телефонах почти не
+// показывается, поэтому свой список под полем.
+export function NameInput({ game, catalog, value, onChange, r, placeholder, className = 'input' }) {
+  const G = GAMES[game];
+  const [focus, setFocus] = useState(false);
+  const [hi, setHi] = useState(0);
+  const hints = focus ? nameHints(catalog, value, { r, top: G.top }) : [];
+  const pick = (c) => { onChange(c.name); setFocus(false); };
+  const onKey = (e) => {
+    if (!hints.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHi((hi + 1) % hints.length); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((hi - 1 + hints.length) % hints.length); }
+    else if (e.key === 'Enter') { e.preventDefault(); pick(hints[Math.min(hi, hints.length - 1)]); }
+    else if (e.key === 'Escape') setFocus(false);
+  };
+  return (
+    <div className="gc-name-in">
+      <input className={className} value={value} placeholder={placeholder} autoComplete="off"
+        onChange={(e) => { onChange(e.target.value); setHi(0); setFocus(true); }}
+        onFocus={() => setFocus(true)} onBlur={() => setFocus(false)} onKeyDown={onKey} />
+      {hints.length > 0 && (
+        <div className="gc-hints" role="listbox">
+          {hints.map((c, i) => (
+            <button key={c.id} type="button" role="option" aria-selected={i === hi} className={i === hi ? 'on' : ''}
+              onMouseDown={(e) => e.preventDefault()} onClick={() => pick(c)}>
+              <CharImg c={c} game={game} size={28} />
+              <span className="gc-hint-name">{c.name}{c.en && c.en !== c.name ? <span className="hint"> · {c.en}</span> : null}</span>
+              {c.soon && <span className="gc-soon">анонс</span>}
+              <Stars n={c.r} top={G.top} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function CharsSection({ uid, game, mine, roster, save }) {
@@ -105,6 +142,7 @@ export function CharsSection({ uid, game, mine, roster, save }) {
             <CharImg c={c} game={game} />
             {c.own && <span className="gc-cons">{G.cons[0]}{c.own.cons || 0}</span>}
             {quick && <span className={`gc-tick ${c.own ? 'on' : ''}`}><i className="fa-solid fa-check" /></span>}
+            {c.soon && <span className="gc-soon gc-soon-cell">анонс</span>}
             <span className="gc-cell-name">{c.name}</span>
             <span className="gc-cell-meta">
               <Stars n={c.r} top={G.top} />
@@ -166,6 +204,7 @@ function CharInfoSheet({ game, c, mine, roster, save, setOwned, onClose }) {
             {elem && <span className="chip"><span className="gc-dot" style={{ background: elem[1] }} />{elem[0]}</span>}
             {c.w && <span className="chip">{WEAPONS[c.w] || c.w}</span>}
             {c.custom && <span className="chip">добавлен вручную</span>}
+            {c.soon && <span className="chip gc-soon">анонс · версия {c.soon}</span>}
           </div>
         </div>
       </div>

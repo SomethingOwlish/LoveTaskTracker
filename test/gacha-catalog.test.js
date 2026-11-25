@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { sessionRecords, sessionPreview, summarize, mergePulls, editTop, classifyTops } from '../src/lib/gacha.js';
-import { applyDrops, mergeCatalog, filterCatalog } from '../src/lib/gachaCatalog.js';
+import { applyDrops, mergeCatalog, filterCatalog, withUpcoming, nameHints } from '../src/lib/gachaCatalog.js';
+import upcoming from '../src/gacha/upcoming.json';
 import genshin from '../src/gacha/genshin.json';
 import hsr from '../src/gacha/hsr.json';
 import endfield from '../src/gacha/endfield.json';
@@ -80,6 +81,30 @@ describe('правка топ-дропа', () => {
     const t = [{ i: 'a', n: 'Himeko' }, { i: 'b', n: 'Kafka' }, { i: 'c', n: 'Аха' }];
     const r = classifyTops(t, { stdNames: ['Himeko'], overrides: { b: 'fifty', c: 'guar' } });
     expect(r.list.map((x) => x.res)).toEqual(['lost', 'won', 'guar']);
+  });
+});
+
+describe('анонсы и подсказки имён', () => {
+  it('анонс показывается, пока персонажа нет в базе', () => {
+    const list = withUpcoming(genshin, upcoming.genshin);
+    expect(list.slice(0, 2).map((c) => c.en)).toEqual(['Danica', 'Tsaritsa']);
+    expect(withUpcoming([...genshin, { id: 'x', name: 'Даника', en: 'Danica', r: 5 }], upcoming.genshin).filter((c) => c.en === 'Danica')).toHaveLength(1);
+  });
+  it('у анонсов и Endfield не повторяются id', () => {
+    for (const [base, soon] of [[genshin, upcoming.genshin], [hsr, upcoming.hsr], [endfield, upcoming.endfield]]) {
+      const ids = withUpcoming(base, soon).map((c) => c.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+    expect(endfield.some((c) => c.en === 'Kay') && endfield.some((c) => c.en === 'Mimino')).toBe(true);
+  });
+  it('подсказки: по началу слова, рус. и англ., нужная редкость выше', () => {
+    expect(nameHints(endfield, 'кэ', { top: 6 }).map((c) => c.en)).toContain('Kay');
+    expect(nameHints(endfield, 'flow', { top: 6 })[0].en).toBe('Argent Flow');
+    const fu = nameHints(genshin, 'ф', { r: 4, top: 5 });
+    expect(fu.length).toBeGreaterThan(0);
+    expect(fu[0].r).toBe(4);
+    expect(nameHints(genshin, 'Фурина', { top: 5 })).toEqual([]); // уже вписано полностью
+    expect(nameHints(withUpcoming(genshin, upcoming.genshin), '', { top: 5 }).slice(0, 2).every((c) => c.soon)).toBe(true);
   });
 });
 

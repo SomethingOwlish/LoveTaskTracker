@@ -4,6 +4,8 @@
 // короткое описание и картинка. Запуск: `node scripts/gacha-catalog.mjs`.
 // Пишет src/gacha/genshin.json и src/gacha/hsr.json.
 // Endfield в этих базах нет — его каталог (src/gacha/endfield.json) правится руками.
+// Анонсированных, которых в базах ещё нет, вписывай в src/gacha/upcoming.json:
+// когда персонаж появится в базе, анонс скроется сам (сверка по имени).
 // Советы по отрядам живут отдельно, в src/gacha/guides.js, и скрипт их не трогает.
 import { writeFile } from 'node:fs/promises';
 
