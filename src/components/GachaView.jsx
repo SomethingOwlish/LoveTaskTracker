@@ -7,7 +7,7 @@ import {
   sessionRecords, sessionPreview,
 } from '../lib/gacha';
 import { applyDrops } from '../lib/gachaCatalog';
-import { CharsSection, useCatalog } from './GachaChars';
+import { CharsSection, useCatalog, NameInput } from './GachaChars';
 import { STATS, GEAR_LEVELS, emptyChar, charReadiness, teamReport, matsLeft, grade } from '../lib/gachaPlan';
 import {
   subscribeGachaSummary, importGacha, ExpiredLinkError, setGachaOverride, saveGachaMeta, addManualPull, removePull,
@@ -194,11 +194,11 @@ function PullsSection({ uid, game, mine, roster, save }) {
 
       {sheet === 'import' && <ImportSheet game={game} onClose={() => setSheet(null)} onImport={runImport} busy={busy} />}
       {sheet === 'session' && <SessionSheet uid={uid} game={game} sum={sum} roster={roster} save={save} onClose={() => setSheet(null)} />}
-      {sheet === 'manual' && <ManualSheet uid={uid} game={game} sum={sum} onClose={() => setSheet(null)} />}
+      {sheet === 'manual' && <ManualSheet uid={uid} game={game} sum={sum} catalog={catalog} onClose={() => setSheet(null)} />}
       {sheet === 'std' && <StdSheet uid={uid} game={game} sum={sum} onClose={() => setSheet(null)} />}
       {sheet?.top && (
         <TopSheet uid={uid} game={game} mine={mine} top={sheet.top} pool={sheet.pool} override={overrides[sheet.top.i]}
-          recent={sum.recent || []} names={(catalog || []).filter((c) => c.r >= G.top).map((c) => c.name)} onClose={() => setSheet(null)} />
+          recent={sum.recent || []} catalog={catalog} onClose={() => setSheet(null)} />
       )}
       {sheet?.history && <HistorySheet uid={uid} game={game} pool={sheet.history} onClose={() => setSheet(null)} />}
     </div>
@@ -301,7 +301,7 @@ function HowTo({ game }) {
   );
 }
 
-function ManualSheet({ uid, game, sum, onClose }) {
+function ManualSheet({ uid, game, sum, catalog, onClose }) {
   const G = GAMES[game];
   const [pool, setPool] = useState(Object.keys(G.pools)[0]);
   const [mode, setMode] = useState('top');
@@ -337,8 +337,12 @@ function ManualSheet({ uid, game, sum, onClose }) {
       {mode === 'top' ? (
         <>
           <div className="field"><label>Кто / что выпало</label>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Имя (как в игре, по-английски — для 50/50)" list="gc-std" />
-            <datalist id="gc-std">{(G.std[P.fifty || 'char'] || []).map((n) => <option key={n} value={n} />)}</datalist>
+            {/weapon/i.test(pool) ? (
+              <>
+                <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Название (как в игре, по-английски — для 50/50)" list="gc-std" />
+                <datalist id="gc-std">{(G.std.weapon || []).map((n) => <option key={n} value={n} />)}</datalist>
+              </>
+            ) : <NameInput game={game} catalog={catalog} r={G.top} value={name} onChange={setName} placeholder="Имя персонажа" />}
           </div>
           <div className="field"><label>На какой крутке (pity)</label>
             <input className="input" inputMode="numeric" value={at} onChange={(e) => setAt(e.target.value)} placeholder={`1–${P.hard}`} />
@@ -375,7 +379,7 @@ function StdSheet({ uid, game, sum, onClose }) {
   );
 }
 
-function TopSheet({ uid, game, mine, top, pool, override, recent, names, onClose }) {
+function TopSheet({ uid, game, mine, top, pool, override, recent, catalog, onClose }) {
   const G = GAMES[game];
   const P = G.pools[pool];
   const manual = top.i.startsWith('m');
@@ -419,8 +423,9 @@ function TopSheet({ uid, game, mine, top, pool, override, recent, names, onClose
         <>
           <div className="section-title">Поправить запись</div>
           <div className="field"><label>Кто выпал</label>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} list="gc-top-names" />
-            <datalist id="gc-top-names">{names.map((n) => <option key={n} value={n} />)}</datalist>
+            {top.k === 'w'
+              ? <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+              : <NameInput game={game} catalog={catalog} r={G.top} value={name} onChange={setName} />}
           </div>
           <div className="field"><label>На какой крутке (pity)</label>
             <input className="input" inputMode="numeric" value={pity} disabled={!manual} onChange={(e) => setPity(e.target.value)} placeholder={`1–${P.hard}`} />
@@ -745,7 +750,6 @@ function SessionSheet({ uid, game, sum, roster, save, onClose }) {
     } catch (e) { reportError(e); } finally { setSaving(false); }
   };
 
-  const names = catalog.filter((c) => c.r >= G.top - 1).map((c) => c.name);
   return (
     <Sheet title="Записать крутки" onClose={onClose}
       footer={<button className="btn btn-accent btn-block" disabled={!res.records || saving} onClick={doSave}>{saving ? <i className="fa-solid fa-spinner fa-spin" /> : 'Сохранить'}</button>}>
@@ -777,7 +781,9 @@ function SessionSheet({ uid, game, sum, roster, save, onClose }) {
             {drops.map((d, i) => (
               <div key={i} className="gc-drop">
                 <span className={`gc-drop-r r${d.r >= G.top ? 'top' : 'mid'}`}>{d.r}★</span>
-                <input className="input" value={d.n} onChange={(e) => setDrop(i, { n: e.target.value })} placeholder={d.k === 'w' ? `Какое ${wName}` : 'Кто'} list={d.k === 'c' ? 'gc-names' : undefined} />
+                {d.k === 'c'
+                  ? <NameInput game={game} catalog={catalog} r={d.r} value={d.n} onChange={(v) => setDrop(i, { n: v })} placeholder="Кто" />
+                  : <input className="input" value={d.n} onChange={(e) => setDrop(i, { n: e.target.value })} placeholder={`Какое ${wName}`} />}
                 <button className={`btn btn-sm ${d.k === 'w' ? 'btn-accent' : ''}`} onClick={() => setDrop(i, { k: d.k === 'w' ? 'c' : 'w' })} title={d.k === 'w' ? wName : 'персонаж'}>
                   <i className={d.k === 'w' ? 'fa-solid fa-khanda' : 'fa-solid fa-user'} />
                 </button>
@@ -785,7 +791,6 @@ function SessionSheet({ uid, game, sum, roster, save, onClose }) {
                 <button className="icon-btn btn-ghost btn" onClick={() => setDrops(drops.filter((_, j) => j !== i))} aria-label="Убрать"><i className="fa-solid fa-xmark" /></button>
               </div>
             ))}
-            <datalist id="gc-names">{names.map((n) => <option key={n} value={n} />)}</datalist>
             <div className="chips">
               <button className="btn btn-sm" onClick={() => addDrop(G.top)}><i className="fa-solid fa-plus" /> {G.top}★</button>
               <button className="btn btn-sm" onClick={() => addDrop(G.top - 1)}><i className="fa-solid fa-plus" /> {G.top - 1}★</button>

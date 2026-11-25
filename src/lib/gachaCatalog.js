@@ -3,6 +3,7 @@
 // Отметки «есть у меня» хранятся в gachaRoster: owned = { id: { cons, note } }.
 import { GAMES } from './gacha.js';
 import { guideFor } from '../gacha/guides.js';
+import upcoming from '../gacha/upcoming.json';
 
 const loaders = {
   genshin: () => import('../gacha/genshin.json'),
@@ -11,8 +12,41 @@ const loaders = {
 };
 const cache = {};
 export function loadCatalog(game) {
-  if (!cache[game]) cache[game] = loaders[game]().then((m) => m.default || m);
+  if (!cache[game]) cache[game] = loaders[game]().then((m) => withUpcoming(m.default || m, upcoming[game]));
   return cache[game];
+}
+
+// Анонсированные (src/gacha/upcoming.json, правится руками) — в начало списка,
+// пока их нет в базе. Как только скрипт подтянет персонажа, анонс скрывается сам.
+export function withUpcoming(base, soon = []) {
+  const norm = (s) => String(s || '').toLowerCase().trim();
+  const have = new Set(base.flatMap((c) => [norm(c.en), norm(c.name)]));
+  return [...soon.filter((c) => !have.has(norm(c.en)) && !have.has(norm(c.name))), ...base];
+}
+
+// Подсказки имён при вводе круток: сначала нужной редкости, по совпадению
+// с началом имени (рус. или англ.), потом по вхождению; при равенстве — новые выше.
+export function nameHints(catalog, q, { r, top, limit = 6 } = {}) {
+  const s = String(q || '').toLowerCase().trim();
+  const pool = (catalog || []).filter((c) => c.r >= top - 1);
+  const score = (c) => {
+    const names = [c.name, c.en].map((x) => String(x || '').toLowerCase());
+    let m = 0;
+    if (s) {
+      if (names.some((x) => x === s)) return -1; // уже вписано
+      if (names.some((x) => x.startsWith(s) || x.split(/[\s-]/).some((w) => w.startsWith(s)))) m = 2;
+      else if (names.some((x) => x.includes(s))) m = 1;
+      else return -1;
+    }
+    return m * 2 + (r && c.r === Number(r) ? 1 : 0);
+  };
+  // свежие выше: анонсы, потом по дате выхода, без даты — что дописано позже
+  const fresh = (x) => (x.c.soon ? 3e9 : x.c.rel || 0) * 1e4 + x.i;
+  return pool.map((c, i) => ({ c, sc: score(c), i }))
+    .filter((x) => x.sc >= 0)
+    .sort((a, b) => b.sc - a.sc || fresh(b) - fresh(a))
+    .slice(0, limit)
+    .map((x) => x.c);
 }
 
 // Стихии: подпись и цвет кружка
