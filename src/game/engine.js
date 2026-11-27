@@ -276,12 +276,12 @@ export function makePack(seed, giant) {
      (не позже дня срока) — ещё +1;
    · настроение — 1 за каждый отмеченный день, +1 если отмечена вся неделя,
      +2 за день, когда отметились оба;
-   · Мурмур — фильм или досмотренный сериал 1, пройденная игра 10
+   · Мурмур — фильм 3, досмотренный сериал 1, пройденная игра 10
      (игры бывают огромные), +1 за свой отзыв; серия сериала — 0,5
      (за неделю округляется вниз, отметка серий общая);
    · бюджет — 1 за каждый день, когда что-то внесено, +1 за разобранный чек. */
 
-export const REWARD = { item: 1, hot: 2, onTime: 1, moodDay: 1, moodWeek: 1, moodPair: 2, media: 1, game: 10, episode: 0.5, review: 1, budgetDay: 1, receipt: 1 };
+export const REWARD = { item: 1, hot: 2, onTime: 1, moodDay: 1, moodWeek: 1, moodPair: 2, movie: 3, media: 1, game: 10, episode: 0.5, review: 1, budgetDay: 1, receipt: 1 };
 
 function msOf(ts) {
   if (!ts) return 0;
@@ -345,7 +345,7 @@ export function rewardsFor({ tasks = [], moods = [], media = [], tx = [], steps 
   const seen = media
     .filter((m) => m.status === 'done' && msOf(m.doneAt) >= since && (m.doneBy === uid || m.ratings?.[uid] != null))
     .map((m) => ({ id: m.id, title: m.title, kind: m.kind, at: msOf(m.doneAt), review: !!m.reviews?.[uid]?.trim?.() }))
-    .map((m) => ({ ...m, coins: (m.kind === 'game' ? REWARD.game : REWARD.media) + (m.review ? REWARD.review : 0) }))
+    .map((m) => ({ ...m, coins: (m.kind === 'game' ? REWARD.game : m.kind === 'movie' ? REWARD.movie : REWARD.media) + (m.review ? REWARD.review : 0) }))
     .sort((a, b) => b.at - a.at);
   const episodes = media.reduce((n, m) => n + Object.values(m.epAt || {}).filter((t) => msOf(t) >= since).length, 0);
   const episodeCoins = Math.floor(episodes * REWARD.episode);
